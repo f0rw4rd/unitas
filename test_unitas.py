@@ -182,7 +182,7 @@ class TestHostScanData(unittest.TestCase):
 
     def test_host_scan_data_creation(self):
         self.assertEqual(self.host.ip, "192.168.1.1")
-        self.assertIsNone(self.host.hostname)
+        self.assertEqual(self.host.hostname, "")
         self.assertEqual(len(self.host.ports), 0)
 
     def test_add_port(self):

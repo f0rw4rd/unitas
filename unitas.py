@@ -282,11 +282,21 @@ class NmapParser(ScanParser):
             status = host.find(".//status")
             if status is not None and status.attrib.get("state") == "up":
                 address = host.find(".//address")
-                if address is not None:
+                if address is not None:  # explicit None check is needed
                     host_ip: str = address.attrib.get("addr", "")
                     h = HostScanData(ip=host_ip)
+
                     self._parse_ports(host, h)
                     self.data[host_ip] = h
+
+                    if "host_name" in self.file_path:
+                        pass
+
+                    hostnames = host.find(".//hostnames")
+                    if hostnames is not None:
+                        for x in hostnames:
+                            if "name" in x.attrib:
+                                h.set_hostname(x.attrib.get("name"))
         return self.data
 
     def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
@@ -428,7 +438,7 @@ def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
 
 
 def parse_files_concurrently(
-    parsers: List[ScanParser], max_workers: int = 5
+    parsers: List[ScanParser], max_workers: int = 1
 ) -> Dict[str, HostScanData]:
     global_state: Dict[str, HostScanData] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
