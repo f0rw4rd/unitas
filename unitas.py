@@ -4,6 +4,7 @@ from xml.etree.ElementTree import ParseError
 from typing import Dict, List, Optional, Tuple, Any, Type
 import os
 import argparse
+import re
 import logging
 from abc import ABC, abstractmethod
 
