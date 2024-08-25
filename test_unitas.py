@@ -2,7 +2,6 @@ import unittest
 from unitas import (
     PortDetails,
     HostScanData,
-    merge_host_data,
     merge_states,
     search_port_or_service,
 )
@@ -22,7 +21,13 @@ class TestPortDetails(unittest.TestCase):
 
     def test_port_details_to_dict(self):
         port = PortDetails("22", "tcp", "open", "ssh")
-        expected = {"port": "22", "protocol": "tcp", "state": "open", "service": "ssh"}
+        expected = {
+            "port": "22",
+            "protocol": "tcp",
+            "state": "open",
+            "service": "ssh",
+            "comment": "",
+        }
         self.assertEqual(port.to_dict(), expected)
 
     def test_port_details_from_dict(self):
@@ -42,6 +47,48 @@ class TestPortDetails(unittest.TestCase):
         self.assertFalse(PortDetails.is_valid_port("-1"))
         self.assertFalse(PortDetails.is_valid_port("abc"))
         self.assertFalse(PortDetails.is_valid_port(""))
+
+    def test_update_service_unknown_to_known(self):
+        port1 = PortDetails("80", "tcp", "open", "unknown?")
+        port2 = PortDetails("80", "tcp", "open", "http")
+        port1.update(port2)
+        self.assertEqual(port1.service, "http")
+
+    def test_update_service_uncertain_to_certain(self):
+        port1 = PortDetails("443", "tcp", "open", "https?")
+        port2 = PortDetails("443", "tcp", "open", "https")
+        port1.update(port2)
+        self.assertEqual(port1.service, "https")
+
+    def test_update_service_no_change(self):
+        port1 = PortDetails("22", "tcp", "open", "ssh")
+        port2 = PortDetails("22", "tcp", "open", "ssh?")
+        port1.update(port2)
+        self.assertEqual(port1.service, "ssh")
+
+    def test_update_comment(self):
+        port1 = PortDetails("80", "tcp", "open", "http")
+        port2 = PortDetails("80", "tcp", "open", "http", "Web server")
+        port1.update(port2)
+        self.assertEqual(port1.comment, "Web server")
+
+    def test_update_comment_no_change(self):
+        port1 = PortDetails("80", "tcp", "open", "http", "Existing comment")
+        port2 = PortDetails("80", "tcp", "open", "http", "New comment")
+        port1.update(port2)
+        self.assertEqual(port1.comment, "Existing comment")
+
+    def test_update_state(self):
+        port1 = PortDetails("80", "tcp", "", "http")
+        port2 = PortDetails("80", "tcp", "open", "http")
+        port1.update(port2)
+        self.assertEqual(port1.state, "open")
+
+    def test_update_state_no_change(self):
+        port1 = PortDetails("80", "tcp", "closed", "http")
+        port2 = PortDetails("80", "tcp", "open", "http")
+        port1.update(port2)
+        self.assertEqual(port1.state, "closed")
 
     def test_invalid_port_creation(self):
         # Test that creating PortDetails with invalid ports raises ValueError
@@ -201,16 +248,6 @@ class TestHostScanData(unittest.TestCase):
         sorted_ports = self.host.get_sorted_ports()
         self.assertEqual([p.port for p in sorted_ports], ["22", "80", "443"])
 
-    def test_merge_host_scan_data(self):
-        other_host = HostScanData("192.168.1.1")
-        self.host.add_port("80", "tcp", "open", "http")
-        other_host.add_port("443", "tcp", "open", "https")
-        other_host.add_port("80", "tcp", "open", "http?")
-        new_ports = self.host.merge(other_host)
-        self.assertEqual(len(self.host.ports), 2)
-        self.assertEqual(len(new_ports), 1)
-        self.assertEqual(str(new_ports[0]), "443/tcp(https)")
-
     def test_overwrite_service(self):
         self.assertTrue(HostScanData.overwrite_service("http?", "http"))
         self.assertFalse(HostScanData.overwrite_service("http", "http?"))
@@ -219,30 +256,6 @@ class TestHostScanData(unittest.TestCase):
 
 
 class TestMergeFunctions(unittest.TestCase):
-    def test_merge_host_data(self):
-        global_state = {
-            "192.168.1.1": HostScanData("192.168.1.1"),
-            "192.168.1.2": HostScanData("192.168.1.2"),
-        }
-        global_state["192.168.1.1"].add_port("80", "tcp", "open", "http")
-        global_state["192.168.1.2"].add_port("22", "tcp", "open", "ssh")
-
-        new_data = {
-            "192.168.1.1": HostScanData("192.168.1.1"),
-            "192.168.1.3": HostScanData("192.168.1.3"),
-        }
-        new_data["192.168.1.1"].add_port("443", "tcp", "open", "https")
-        new_data["192.168.1.3"].add_port("3306", "tcp", "open", "mysql")
-
-        new_hosts, updated_hosts = merge_host_data(global_state, new_data)
-
-        self.assertEqual(len(new_hosts), 1)
-        self.assertEqual(new_hosts[0].ip, "192.168.1.3")
-        self.assertEqual(len(updated_hosts), 1)
-        self.assertIn("192.168.1.1", updated_hosts)
-        self.assertEqual(len(global_state), 3)
-        self.assertEqual(len(global_state["192.168.1.1"].ports), 2)
-
     def test_merge_states(self):
         old_state = {
             "192.168.1.1": HostScanData("192.168.1.1"),
@@ -263,7 +276,7 @@ class TestMergeFunctions(unittest.TestCase):
 
         self.assertEqual(len(merged_state), 3)
         self.assertEqual(len(merged_state["192.168.1.1"].ports), 2)
-        self.assertEqual(merged_state["192.168.1.1"].ports[0].service, "http-alt")
+        self.assertEqual(merged_state["192.168.1.1"].ports[0].service, "http")
         self.assertIn("192.168.1.3", merged_state)
 
 

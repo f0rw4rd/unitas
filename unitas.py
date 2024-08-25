@@ -12,13 +12,21 @@ from abc import ABC, abstractmethod
 
 
 class PortDetails:
-    def __init__(self, port: str, protocol: str, state: str, service: str = "unknown?"):
+    def __init__(
+        self,
+        port: str,
+        protocol: str,
+        state: str,
+        service: str = "unknown?",
+        comment: str = "",
+    ):
         if not PortDetails.is_valid_port(port):
             raise ValueError(f'Port "{port}" is not valid!')
         self.port = port
         self.protocol = protocol
         self.state = state
         self.service = service
+        self.comment = comment
 
     def __str__(self) -> str:
         return f"{self.port}/{self.protocol}({self.service})"
@@ -29,6 +37,7 @@ class PortDetails:
             "protocol": self.protocol,
             "state": self.state,
             "service": self.service,
+            "comment": self.comment,
         }
 
     def __eq__(self, other):
@@ -47,6 +56,14 @@ class PortDetails:
         if update_service:
             logging.debug(f"Updating service from {self.service} -> {other.service}")
             self.service = other.service
+        # update the comments if comment is set
+        if not self.comment and other.comment:
+            logging.debug(f"Updating comment from {self.comment} -> {other.comment}")
+            self.comment = other.comment
+
+        if not self.state and other.state:
+            logging.debug(f"Updating state from {self.state} -> {other.state}")
+            self.state = other.state
 
     @staticmethod
     def is_valid_port(port: str) -> bool:
