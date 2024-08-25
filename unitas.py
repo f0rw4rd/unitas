@@ -6,9 +6,11 @@ import os
 import concurrent.futures
 import argparse
 import re
+import socket
 from ipaddress import ip_address
 import logging
 from abc import ABC, abstractmethod
+from functools import lru_cache
 
 
 class PortDetails:
@@ -76,6 +78,33 @@ class PortDetails:
             return 1 <= port_num <= 65535
         except ValueError:
             return False
+
+    SERVICE_MAPPING: Dict[str, str] = {
+        "www": "http",
+        "microsoft-ds": "smb",
+        "ms-wbt-server": "rdp",
+    }
+
+    @staticmethod
+    def get_service_name(service: str):
+        if service in PortDetails.SERVICE_MAPPING:
+            return PortDetails.SERVICE_MAPPING[service]
+        return service
+
+    @staticmethod
+    @lru_cache(maxsize=1024)
+    def get_service_name_for_port(
+        port: str, protocol: str = "tcp", default_service: str = "unknown?"
+    ):
+        if PortDetails.is_valid_port(port):
+
+            try:
+                service = socket.getservbyport(int(port), protocol)
+            except socket.error:
+                service = default_service
+            return PortDetails.get_service_name(service)
+        else:
+            raise ValueError(f'Port "{port}" is not valid!')
 
     @classmethod
     def from_dict(cls, data: Dict[str, str]) -> "PortDetails":
@@ -288,6 +317,7 @@ class NessusParser(ScanParser):
             port: str = item.attrib.get("port", "")
             protocol: str = item.attrib.get("protocol", "")
             service: str = item.attrib.get("svc_name", "")
+            service = PortDetails.get_service_name(service)
             if "TLS" in item.attrib.get("pluginName", "") or "SSL" in item.attrib.get(
                 "pluginName", ""
             ):
@@ -303,7 +333,10 @@ class NessusParser(ScanParser):
             protocol: str = item.attrib.get("protocol", "")
             service: str = item.attrib.get("svc_name", "")
             if "?" not in service:  # append a ? for just port scans
+                service = PortDetails.get_service_name_for_port(port, protocol, service)
                 service += "?"
+            else:
+                service = PortDetails.get_service_name(service)
             state: str = "open"
             host.add_port(port, protocol, state, service)
 
@@ -326,9 +359,6 @@ class NmapParser(ScanParser):
                     self._parse_ports(host, h)
                     self.data[host_ip] = h
 
-                    if "host_name" in self.file_path:
-                        pass
-
                     hostnames = host.find(".//hostnames")
                     if hostnames is not None:
                         for x in hostnames:
@@ -349,7 +379,12 @@ class NmapParser(ScanParser):
             if service_element is not None:
                 service: str = service_element.attrib.get("name", "")
                 if service_element.attrib.get("method") == "table":
+                    service = PortDetails.get_service_name_for_port(
+                        portid, protocol, service
+                    )
                     service += "?"
+                else:
+                    service = PortDetails.get_service_name(service)
                 if service_element.attrib.get("tunnel", "none") == "ssl":
                     service += "/tls"
             else:
