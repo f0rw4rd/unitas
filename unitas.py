@@ -1,7 +1,6 @@
 import glob
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
-import pickle
 from typing import Dict, List, Optional, Tuple, Any, Type
 import os
 import argparse
@@ -150,19 +149,6 @@ class MarkdownConvert(Convert):
         return result
 
 
-def save_to_file(hosts: Dict[str, HostScanData], filename: str = ".state.pkl") -> None:
-    with open(filename, "wb") as file:
-        pickle.dump(hosts, file)
-
-
-def load_from_file(filename: str = ".state.pkl") -> Dict[str, HostScanData]:
-    if not os.path.exists(filename):
-        logging.warning("File not found. Using empty state.")
-        return {}
-    with open(filename, "rb") as file:
-        return pickle.load(file)
-
-
 class ScanParser(ABC):
     def __init__(self, file_path: str):
         self.file_path: str = file_path
@@ -308,6 +294,50 @@ def setup_logging(log_level: str = "INFO") -> None:
     )
 
 
+def save_markdown_state(state: Dict[str, HostScanData], filename: str):
+    converter = MarkdownConvert(state)
+    content = converter.convert()
+    with open(filename, "w") as f:
+        f.write(content)
+
+
+def load_markdown_state(filename: str) -> Dict[str, HostScanData]:
+    try:
+        with open(filename, "r") as f:
+            content = f.read()
+        # Strip empty lines
+        content = "\n".join(line for line in content.split("\n") if line.strip())
+        converter = MarkdownConvert()
+        return converter.parse(content)
+    except FileNotFoundError:
+        logging.warning(f"File {filename} not found. Starting with empty state.")
+        return {}
+    except Exception as e:
+        logging.error(f"Error loading {filename}: {str(e)}")
+        return {}
+
+
+def merge_states(
+    old_state: Dict[str, HostScanData], new_state: Dict[str, HostScanData]
+) -> Dict[str, HostScanData]:
+    merged_state = old_state.copy()
+    for ip, host_data in new_state.items():
+        if ip in merged_state:
+            # Merge port information
+            existing_ports = {(p.port, p.protocol): p for p in merged_state[ip].ports}
+            for new_port in host_data.ports:
+                key = (new_port.port, new_port.protocol)
+                if key not in existing_ports or new_port.service != "unknown?":
+                    existing_ports[key] = new_port
+            merged_state[ip].ports = list(existing_ports.values())
+        else:
+            merged_state[ip] = host_data
+    return merged_state
+
+
+# TBD: test the loading and generation of nmap files
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unitas Scan Parser")
     parser.add_argument("scan_folder", help="Folder containing scan files")
@@ -317,14 +347,22 @@ def main() -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level",
     )
+    parser.add_argument(
+        "--update", action="store_true", help="Update existing state.md file"
+    )
     args = parser.parse_args()
+
+    if args.update:
+        existing_state = load_markdown_state("state.md")
+    else:
+        existing_state = {}
 
     setup_logging(args.log_level)
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
         args.scan_folder
     )
-    global_state = load_from_file()
+    global_state = {}
 
     if not parsers:
         logging.error("Could not load any kind of scan files")
@@ -348,12 +386,19 @@ def main() -> None:
         except ParseError:
             logging.error("Could not load %s, invalid XML", p.file_path)
 
-    if global_state:
-        print(MarkdownConvert(global_state).convert())
+    final_state = merge_states(existing_state, global_state)
+
+    if final_state:
+        md_converter = MarkdownConvert(final_state)
+        md_content = md_converter.convert()
+
+        logging.info("Scan Results (Markdown):")
+        print(md_content)
+
+        save_markdown_state(final_state, "state.md")
+        logging.info("Updated state saved to state.md")
     else:
         logging.info("Did not find any open ports!")
-
-    save_to_file(global_state)
 
 
 if __name__ == "__main__":
