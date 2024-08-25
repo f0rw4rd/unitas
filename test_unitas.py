@@ -83,40 +83,102 @@ class TestSearchFunction(unittest.TestCase):
         self.global_state["192.168.1.3"].add_port("3306", "tcp", "open", "mysql")
 
     def test_search_by_port(self):
-        result = search_port_or_service(self.global_state, " 80")
+        result = search_port_or_service(self.global_state, [" 80"])
         self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
 
-        result = search_port_or_service(self.global_state, "22")
+        result = search_port_or_service(self.global_state, ["22"])
         self.assertEqual(result, ["192.168.1.2"])
 
-        result = search_port_or_service(self.global_state, "3306")
+        result = search_port_or_service(self.global_state, ["3306"])
         self.assertEqual(result, ["192.168.1.3"])
 
     def test_search_by_service(self):
-        result = search_port_or_service(self.global_state, "http")
+        result = search_port_or_service(self.global_state, ["http"])
         self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
 
-        result = search_port_or_service(self.global_state, "ssh")
+        result = search_port_or_service(self.global_state, ["ssh"])
         self.assertEqual(result, ["192.168.1.2"])
 
-        result = search_port_or_service(self.global_state, "mysql")
+        result = search_port_or_service(self.global_state, ["mysql"])
         self.assertEqual(result, ["192.168.1.3"])
 
     def test_case_insensitive_service_search(self):
-        result = search_port_or_service(self.global_state, "HTTP")
+        result = search_port_or_service(self.global_state, ["HTTP"])
         self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
 
     def test_search_non_existent(self):
-        result = search_port_or_service(self.global_state, "8080")
+        result = search_port_or_service(self.global_state, ["8080"])
         self.assertEqual(result, [])
 
-        result = search_port_or_service(self.global_state, "ftp")
+        result = search_port_or_service(self.global_state, ["ftp"])
         self.assertEqual(result, [])
 
 
 class TestHostScanData(unittest.TestCase):
     def setUp(self):
         self.host = HostScanData("192.168.1.1")
+
+    def test_valid_ipv4_addresses(self):
+        valid_ipv4 = [
+            "192.168.0.1",
+            "10.0.0.0",
+            "172.16.0.1",
+            "255.255.255.255",
+            "0.0.0.0",
+        ]
+        for ip in valid_ipv4:
+            with self.subTest(ip=ip):
+                self.assertTrue(HostScanData.is_valid_ip(ip))
+                HostScanData(ip)  # Should not raise ValueError
+
+    def test_valid_ipv6_addresses(self):
+        valid_ipv6 = [
+            "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+            "fe80::1ff:fe23:4567:890a",
+            "::",
+            "::1",
+            "2001:db8::",
+            "fe80::",
+        ]
+        for ip in valid_ipv6:
+            with self.subTest(ip=ip):
+                self.assertTrue(HostScanData.is_valid_ip(ip))
+                HostScanData(ip)  # Should not raise ValueError
+
+    def test_invalid_ip_addresses(self):
+        invalid_ips = [
+            "256.0.0.1",
+            "192.168.0.256",
+            "192.168.0",
+            "192.168.0.1.2",
+            "2001:0db8:85a3:0000:0000:8a2e:0370:7334:7334",
+            ":::",
+            "2001::db8::1",
+            "192.168.0.1:",
+            "example.com",
+            "localhost",
+            "",
+            "  ",
+            "192.168.0.1 ",
+            " 192.168.0.1",
+        ]
+        for ip in invalid_ips:
+            with self.subTest(ip=ip):
+                self.assertFalse(HostScanData.is_valid_ip(ip))
+                with self.assertRaises(ValueError):
+                    HostScanData(ip)
+
+    def test_edge_cases(self):
+        edge_cases = [
+            "0.0.0.0",
+            "255.255.255.255",
+            "::",
+            "::1",
+        ]
+        for ip in edge_cases:
+            with self.subTest(ip=ip):
+                self.assertTrue(HostScanData.is_valid_ip(ip))
+                HostScanData(ip)
 
     def test_host_scan_data_creation(self):
         self.assertEqual(self.host.ip, "192.168.1.1")

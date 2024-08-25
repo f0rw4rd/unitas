@@ -49,7 +49,7 @@ class HostScanData:
         if not HostScanData.is_valid_ip(ip):
             raise ValueError(f"'{ip}' is not a valid ip!")
         self.ip = ip
-        self.hostname: Optional[str] = None
+        self.hostname: str = ""
         self.ports: List[PortDetails] = []
 
     @staticmethod
@@ -148,12 +148,12 @@ class Convert(ABC):
 
 class MarkdownConvert(Convert):
     def convert(self) -> str:
-        output = ["|IP|Port|Status|Comment|"]
-        output.append("|--|--|--|---|")
+        output = ["|IP|Hostname|Port|Status|Comment|"]
+        output.append("|--|--|--|--|---|")
         for host in self.global_state.values():
             for port in host.get_sorted_ports():
                 output.append(
-                    f"|{host.ip}|{port.port}/{port.protocol}({port.service})|||"
+                    f"|{host.ip}|{host.hostname}|{port.port}/{port.protocol}({port.service})|||"
                 )
         return "\n".join(output)
 
@@ -162,10 +162,11 @@ class MarkdownConvert(Convert):
         result = {}
         for line in lines:
             match = re.match(
-                r"\|([^|]+)\|([^|]+)/([^|]+)\(([^)]+)\)\|([^|]*)\|([^|]*)\|", line
+                r"\|([^|]+)\|([^|]+)\|([^|]+)/([^|]+)\(([^)]+)\)\|([^|]*)\|([^|]*)\|",
+                line,
             )
             if match:
-                ip, port, protocol, service, status, comment = match.groups()
+                ip, hostname, port, protocol, service, status, comment = match.groups()
                 if ip not in result:
                     result[ip] = HostScanData(ip.strip())
                 result[ip].add_port(
@@ -174,6 +175,9 @@ class MarkdownConvert(Convert):
                     status.strip() or "open",
                     service.strip(),
                 )
+                # TBD: integrate comments
+                if hostname:
+                    result[ip].set_hostname(hostname)
         return result
 
 
@@ -406,8 +410,8 @@ def search_port_or_service(
     for ip, host_data in global_state.items():
         for port in host_data.ports:
             if any(
-                term.lower() in port.port.lower()
-                or term.lower() in port.service.lower()
+                term.lower().strip() in port.port.lower()
+                or term.lower().strip() in port.service.lower()
                 for term in search_terms
             ):
                 matching_ips.add(ip)
