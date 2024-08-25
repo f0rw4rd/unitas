@@ -106,6 +106,50 @@ class HostScanData:
         return host
 
 
+class Convert(ABC):
+    def __init__(self, global_state: Dict[str, HostScanData] = None):
+        self.global_state = global_state or {}
+
+    @abstractmethod
+    def convert(self) -> str:
+        pass
+
+    @abstractmethod
+    def parse(self, content: str) -> Dict[str, HostScanData]:
+        pass
+
+
+class MarkdownConvert(Convert):
+    def convert(self) -> str:
+        output = ["|IP|Port|Status|Comment|"]
+        output.append("|--|--|--|---|")
+        for host in self.global_state.values():
+            for port in host.get_sorted_ports():
+                output.append(
+                    f"|{host.ip}|{port.port}/{port.protocol}({port.service})|||"
+                )
+        return "\n".join(output)
+
+    def parse(self, content: str) -> Dict[str, HostScanData]:
+        lines = content.strip().split("\n")[2:]  # Skip header and separator
+        result = {}
+        for line in lines:
+            match = re.match(
+                r"\|([^|]+)\|([^|]+)/([^|]+)\(([^)]+)\)\|([^|]*)\|([^|]*)\|", line
+            )
+            if match:
+                ip, port, protocol, service, status, comment = match.groups()
+                if ip not in result:
+                    result[ip] = HostScanData(ip.strip())
+                result[ip].add_port(
+                    port.strip(),
+                    protocol.strip(),
+                    status.strip() or "open",
+                    service.strip(),
+                )
+        return result
+
+
 def save_to_file(hosts: Dict[str, HostScanData], filename: str = ".state.pkl") -> None:
     with open(filename, "wb") as file:
         pickle.dump(hosts, file)
@@ -305,12 +349,7 @@ def main() -> None:
             logging.error("Could not load %s, invalid XML", p.file_path)
 
     if global_state:
-        logging.info("Scan Results:")
-        print("|IP|Port|Status|Comment")
-        print("|--|--|--|---|")
-        for host in global_state.values():
-            for row in host.to_markdown_rows():
-                print(row)
+        print(MarkdownConvert(global_state).convert())
     else:
         logging.info("Did not find any open ports!")
 

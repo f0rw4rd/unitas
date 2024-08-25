@@ -1,6 +1,7 @@
 # ignore the test files, just local scans
 test/
 .state.pkl
+state.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
