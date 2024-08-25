@@ -82,6 +82,7 @@ class PortDetails:
     SERVICE_MAPPING: Dict[str, str] = {
         "www": "http",
         "microsoft-ds": "smb",
+        "netbios-ssn": "smb",
         "ms-wbt-server": "rdp",
     }
 
@@ -322,7 +323,7 @@ class NessusParser(ScanParser):
                 "pluginName", ""
             ):
                 service += "/tls"
-            state: str = "open"
+            state: str = "TBD"
             host.add_port(port, protocol, state, service)
 
     def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
@@ -337,7 +338,7 @@ class NessusParser(ScanParser):
                 service += "?"
             else:
                 service = PortDetails.get_service_name(service)
-            state: str = "open"
+            state: str = "TBD"
             host.add_port(port, protocol, state, service)
 
 
@@ -391,7 +392,7 @@ class NmapParser(ScanParser):
                 service = "unknown?"
 
             if state == "open":
-                h.add_port(portid, protocol, state, service)
+                h.add_port(portid, protocol, "TBD", service)
 
 
 class CustomFormatter(logging.Formatter):
