@@ -6,14 +6,13 @@ import os
 import concurrent.futures
 import argparse
 import re
+from ipaddress import ip_address
 import logging
 from abc import ABC, abstractmethod
 
 
 class PortDetails:
-    def __init__(
-        self, port: str, protocol: str, state: str, service: Optional[str] = None
-    ):
+    def __init__(self, port: str, protocol: str, state: str, service: str = "unknown?"):
         if not PortDetails.is_valid_port(port):
             raise ValueError(f'Port "{port}" is not valid!')
         self.port = port
@@ -47,9 +46,19 @@ class PortDetails:
 
 class HostScanData:
     def __init__(self, ip: str):
+        if not HostScanData.is_valid_ip(ip):
+            raise ValueError(f"'{ip}' is not a valid ip!")
         self.ip = ip
         self.hostname: Optional[str] = None
         self.ports: List[PortDetails] = []
+
+    @staticmethod
+    def is_valid_ip(address: str) -> bool:
+        try:
+            ip_address(address)
+            return True
+        except ValueError:
+            return False
 
     @staticmethod
     def overwrite_service(old_service: str, new_service: str) -> bool:
@@ -119,7 +128,7 @@ class HostScanData:
 
 class Convert(ABC):
     def __init__(self, global_state: Dict[str, HostScanData] = None):
-        self.global_state = global_state or {}
+        self.global_state = Convert.sort_global_state_by_ip(global_state or {})
 
     @abstractmethod
     def convert(self) -> str:
@@ -128,6 +137,13 @@ class Convert(ABC):
     @abstractmethod
     def parse(self, content: str) -> Dict[str, HostScanData]:
         pass
+
+    @staticmethod
+    def sort_global_state_by_ip(
+        global_state: Dict[str, HostScanData]
+    ) -> Dict[str, HostScanData]:
+        sorted_ips = sorted(global_state.keys(), key=lambda ip: ip_address(ip))
+        return {ip: global_state[ip] for ip in sorted_ips}
 
 
 class MarkdownConvert(Convert):
@@ -201,13 +217,25 @@ class NessusParser(ScanParser):
 
     def parse(self) -> Dict[str, HostScanData]:
         for block in self.root.findall(".//ReportHost"):
-            ip: str = block.attrib.get("name", "")
-            host = HostScanData(ip=ip)
+            name: str = block.attrib.get("name", "")
+            hostname: Optional[str] = None
 
-            hostname = block.find(".//tag[@name='host-fqdn']")
-            if hostname is not None and hostname.text:
-                host.set_hostname(hostname.text)
+            if HostScanData.is_valid_ip(name):
+                ip = name
+                host_blk = block.find(".//tag[@name='host-fqdn']")
+                if host_blk is not None and host_blk.text:
+                    hostname = host_blk.text
+            else:
+                ip_blk = block.find(".//tag[@name='host-ip']")
+                hostname = name
+                if ip_blk is not None and ip_blk.text:
+                    ip = ip_blk.text
+                else:
+                    raise ValueError(f"Could not find IP for host {hostname}")
 
+            host = HostScanData(ip)
+            if hostname:
+                host.set_hostname(hostname)
             self._parse_service_detection(block, host)
             self._parse_port_scanners(block, host)
 
@@ -387,16 +415,7 @@ def search_port_or_service(
     return sorted(list(matching_ips))
 
 
-# TBD: test the loading and generation of nmap files
-
-
 def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
-    """
-    Parse a single file and return the results.
-
-    :param parser: ScanParser instance
-    :return: Tuple of (file_path, parsed_data)
-    """
     try:
         return parser.file_path, parser.parse()
     except ParseError:
@@ -486,6 +505,8 @@ def main() -> None:
                     )
         except ParseError:
             logging.error("Could not load %s, invalid XML", p.file_path)
+        except ValueError as e:
+            logging.error(f"Failed to parse {p.file_path}: {e}")
 
     final_state = merge_states(existing_state, global_state)
     if not final_state:
