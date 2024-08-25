@@ -13,6 +13,8 @@ class PortDetails:
     def __init__(
         self, port: str, protocol: str, state: str, service: Optional[str] = None
     ):
+        if not PortDetails.is_valid_port(port):
+            raise ValueError(f'Port "{port}" is not valid!')
         self.port = port
         self.protocol = protocol
         self.state = state
@@ -28,6 +30,14 @@ class PortDetails:
             "state": self.state,
             "service": self.service,
         }
+
+    @staticmethod
+    def is_valid_port(port: str) -> bool:
+        try:
+            port_num = int(port)
+            return 1 <= port_num <= 65535
+        except ValueError:
+            return False
 
     @classmethod
     def from_dict(cls, data: Dict[str, str]) -> "PortDetails":

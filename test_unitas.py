@@ -27,6 +27,41 @@ class TestPortDetails(unittest.TestCase):
         self.assertEqual(port.state, "open")
         self.assertEqual(port.service, "mysql")
 
+    def test_is_valid_port(self):
+        self.assertTrue(PortDetails.is_valid_port("1"))
+        self.assertTrue(PortDetails.is_valid_port("80"))
+        self.assertTrue(PortDetails.is_valid_port("65535"))
+        self.assertFalse(PortDetails.is_valid_port("0"))
+        self.assertFalse(PortDetails.is_valid_port("65536"))
+        self.assertFalse(PortDetails.is_valid_port("-1"))
+        self.assertFalse(PortDetails.is_valid_port("abc"))
+        self.assertFalse(PortDetails.is_valid_port(""))
+
+    def test_invalid_port_creation(self):
+        # Test that creating PortDetails with invalid ports raises ValueError
+        with self.assertRaises(ValueError):
+            PortDetails("0", "tcp", "open", "invalid")
+
+        with self.assertRaises(ValueError):
+            PortDetails("65536", "tcp", "open", "invalid")
+
+        with self.assertRaises(ValueError):
+            PortDetails("-1", "tcp", "open", "invalid")
+
+        with self.assertRaises(ValueError):
+            PortDetails("abc", "tcp", "open", "invalid")
+
+    def test_valid_port_creation(self):
+        # Test that creating PortDetails with valid ports doesn't raise an exception
+        try:
+            PortDetails("1", "tcp", "open", "service1")
+            PortDetails("80", "tcp", "open", "http")
+            PortDetails("65535", "udp", "open", "service2")
+            PortDetails("65535", "udp", "open", "service2")
+
+        except ValueError:
+            self.fail("PortDetails raised ValueError unexpectedly!")
+
 
 class TestHostScanData(unittest.TestCase):
     def setUp(self):
