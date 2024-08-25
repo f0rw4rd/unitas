@@ -1,64 +1,70 @@
-mport glob
+import glob
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 import pickle
+from typing import Dict, List, Optional, Tuple, Any, Type
 import os
+import argparse
+import logging
+from abc import ABC, abstractmethod
+
 
 class PortDetails:
-    def __init__(self, port, protocol, state, service=None):
+    def __init__(
+        self, port: str, protocol: str, state: str, service: Optional[str] = None
+    ):
         self.port = port
         self.protocol = protocol
         self.state = state
         self.service = service
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.port}/{self.protocol}({self.service})"
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, str]:
         return {
             "port": self.port,
             "protocol": self.protocol,
             "state": self.state,
-            "service": self.service
+            "service": self.service,
         }
 
     @classmethod
-    def from_dict(cls, data):
-        return cls(data['port'], data['protocol'], data['state'], data['service'])
+    def from_dict(cls, data: Dict[str, str]) -> "PortDetails":
+        return cls(data["port"], data["protocol"], data["state"], data["service"])
+
 
 class HostScanData:
-    def __init__(self, ip):
+    def __init__(self, ip: str):
         self.ip = ip
-        self.hostname = None
-        self.ports = []
+        self.hostname: Optional[str] = None
+        self.ports: List[PortDetails] = []
 
-    def overwrite_service(self, old_service, new_service) -> bool:
-        # only replace if service has more information                
-        if "?" in old_service and not "?" in new_service:
+    @staticmethod
+    def overwrite_service(old_service: str, new_service: str) -> bool:
+        if "?" in old_service and "?" not in new_service:
             return True
-        # longer service name the better
-        if not "?" in new_service and len(new_service) > len(old_service):
+        if "?" not in new_service and len(new_service) > len(old_service):
             return True
         return False
 
-    def add_port(self, port: int, protocol: str, state: str, service: str="unknown?"):
-        for p in self.ports: 
-            if p.port == port and p.protocol == protocol: 
+    def add_port(
+        self, port: str, protocol: str, state: str, service: str = "unknown?"
+    ) -> None:
+        for p in self.ports:
+            if p.port == port and p.protocol == protocol:
                 if self.overwrite_service(p.service, service):
-                    p.service = service 
+                    p.service = service
                 return
         self.ports.append(PortDetails(port, protocol, state, service))
 
-    def set_hostname(self, hostname):
+    def set_hostname(self, hostname: str) -> None:
         self.hostname = hostname
-    
-    def get_sorted_ports(self):
-        # Sort ports by protocol and then by port number (assuming ports are stored as strings, convert to int for sorting)
-        sorted_ports = sorted(self.ports, key=lambda p: (p.protocol, int(p.port)))
-        return sorted_ports
 
-    def merge(self, other):
-        """Merge another HostScanData object into this one."""
+    def get_sorted_ports(self) -> List[PortDetails]:
+        return sorted(self.ports, key=lambda p: (p.protocol, int(p.port)))
+
+    def merge(self, other: "HostScanData") -> List[PortDetails]:
         if self.ip != other.ip:
             raise ValueError("Cannot merge hosts with different IPs")
         self.hostname = self.hostname or other.hostname
@@ -75,126 +81,166 @@ class HostScanData:
                 existing_ports[key].service = port.service
         return new_ports
 
-    def __str__(self):
+    def __str__(self) -> str:
         ports_str = ", ".join(str(port) for port in self.ports)
         return f"{self.ip} ({self.hostname}): {ports_str}"
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "ip": self.ip,
             "hostname": self.hostname,
-            "ports": [port.to_dict() for port in self.ports]
+            "ports": [port.to_dict() for port in self.ports],
         }
 
-    def to_markdown_rows(self):
-        return [f"|{self.ip}|{str(x)}|       |       |" for x in self.get_sorted_ports()]
+    def to_markdown_rows(self) -> List[str]:
+        return [
+            f"|{self.ip}|{str(x)}|       |       |" for x in self.get_sorted_ports()
+        ]
 
     @classmethod
-    def from_dict(cls, data):
-        host = cls(data['ip'])
-        host.hostname = data['hostname']
-        for port_data in data['ports']:
+    def from_dict(cls, data: Dict[str, Any]) -> "HostScanData":
+        host = cls(data["ip"])
+        host.hostname = data["hostname"]
+        for port_data in data["ports"]:
             host.ports.append(PortDetails.from_dict(port_data))
         return host
 
-def save_to_file(hosts, filename='.state.pkl'):
-    """Save the dictionary of HostScanData objects to a file using pickle."""
-    with open(filename, 'wb') as file:
+
+def save_to_file(hosts: Dict[str, HostScanData], filename: str = ".state.pkl") -> None:
+    with open(filename, "wb") as file:
         pickle.dump(hosts, file)
 
-def load_from_file(filename='.state.pkl') -> dict:
-    """Load the dictionary of HostScanData objects from a file using pickle."""
+
+def load_from_file(filename: str = ".state.pkl") -> Dict[str, HostScanData]:
     if not os.path.exists(filename):
-        print("File not found. Using empty state.")
+        logging.warning("File not found. Using empty state.")
         return {}
-    with open(filename, 'rb') as file:
+    with open(filename, "rb") as file:
         return pickle.load(file)
 
-def glob_files(directory, extensions):
-    """ Glob files in the specified directory with given extensions. """
-    files = []
-    for ext in extensions:
-        files.extend(glob.glob(f"{directory}/**/*.{ext}", recursive=True))
-    return files
+
+class ScanParser(ABC):
+    def __init__(self, file_path: str):
+        self.file_path: str = file_path
+        self.tree: ET.ElementTree = ET.parse(file_path)
+        self.root: ET.Element = self.tree.getroot()
+        self.data: Dict[str, HostScanData] = {}
+
+    @abstractmethod
+    def parse(self) -> Dict[str, HostScanData]:
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def get_extensions() -> List[str]:
+        pass
+
+    @classmethod
+    def load_file(cls, dir: str) -> List["ScanParser"]:
+        files = []
+        for ext in cls.get_extensions():
+            logging.debug(
+                f'Looking in folder "{dir}" for "{ext}" files for parser {cls.__name__}'
+            )
+            for f in glob.glob(f"{dir}/**/*.{ext}", recursive=True):
+                logging.debug(f"Adding file {f}")
+                try:
+                    files.append(cls(f))
+                except ParseError as e:
+                    logging.error(f"Could not load XML from file {f}")
+        return files
 
 
-def parse_nessus(file_path):
-    """Parse a .nessus file to extract hosts and open ports."""
-    tree = ET.parse(file_path)
-    root = tree.getroot()
-    data = {}
+class NessusParser(ScanParser):
 
-    for block in root.findall('.//ReportHost'):
-        ip = block.attrib.get('name')
-        host = HostScanData(ip=ip)
+    @staticmethod
+    def get_extensions() -> List[str]:
+        return ["nessus"]
 
-        # Set hostname if available
-        hostname = block.find(".//tag[@name='host-fqdn']")
-        if hostname is not None:
-            host.set_hostname(hostname.text)
-        
+    def parse(self) -> Dict[str, HostScanData]:
+        for block in self.root.findall(".//ReportHost"):
+            ip: str = block.attrib.get("name", "")
+            host = HostScanData(ip=ip)
+
+            hostname = block.find(".//tag[@name='host-fqdn']")
+            if hostname is not None and hostname.text:
+                host.set_hostname(hostname.text)
+
+            self._parse_service_detection(block, host)
+            self._parse_port_scanners(block, host)
+
+            self.data[ip] = host
+        return self.data
+
+    def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> None:
         for item in block.findall(".//ReportItem[@pluginFamily='Service detection']"):
-            port = item.attrib.get('port')
-            protocol = item.attrib.get('protocol')            
-            service = item.attrib.get('svc_name') 
-            if "TLS" in item.attrib.get("pluginName") or "SSL" in item.attrib.get("pluginName"):
+            port: str = item.attrib.get("port", "")
+            protocol: str = item.attrib.get("protocol", "")
+            service: str = item.attrib.get("svc_name", "")
+            if "TLS" in item.attrib.get("pluginName", "") or "SSL" in item.attrib.get(
+                "pluginName", ""
+            ):
                 service += "/tls"
-            state = "open"
+            state: str = "open"
             host.add_port(port, protocol, state, service)
 
-        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):            
-            port = item.attrib.get('port')          
-            if port == "0": # host scan
-                continue   
-            protocol = item.attrib.get('protocol')
-            service = item.attrib.get('svc_name')
-            if "?" not in service: # append a ? for just port scans
+    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
+        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
+            port: str = item.attrib.get("port", "")
+            if port == "0":  # host scan
+                continue
+            protocol: str = item.attrib.get("protocol", "")
+            service: str = item.attrib.get("svc_name", "")
+            if "?" not in service:  # append a ? for just port scans
                 service += "?"
-            state = "open"
+            state: str = "open"
             host.add_port(port, protocol, state, service)
 
-        data[ip] = host
 
-    return data
+class NmapParser(ScanParser):
 
-def parse_nmap(file_path):
-    """Parse an .nmap file to extract hosts and open ports."""
-    tree = ET.parse(file_path)
-    root = tree.getroot()
-    data = {}
+    @staticmethod
+    def get_extensions() -> List[str]:
+        return ["xml"]
 
-    for host in root.findall('.//host'):
-        # Check if host is up
-        status = host.find('.//status')
-        if status is not None and status.attrib.get('state') == 'up':
-            address = host.find('.//address')
-            if address is not None:
-                host_ip = address.attrib.get('addr')
-                h = HostScanData(ip=host_ip)
+    def parse(self) -> Dict[str, HostScanData]:
+        for host in self.root.findall(".//host"):
+            status = host.find(".//status")
+            if status is not None and status.attrib.get("state") == "up":
+                address = host.find(".//address")
+                if address is not None:
+                    host_ip: str = address.attrib.get("addr", "")
+                    h = HostScanData(ip=host_ip)
+                    self._parse_ports(host, h)
+                    self.data[host_ip] = h
+        return self.data
 
-                for port in host.findall('.//port'):
-                    protocol = port.attrib.get("protocol")
-                    portid = port.attrib.get("portid")    
-                    if portid == "443":
-                        pass                
-                    state = port.find('.//state').attrib.get('state')
-                    service_element = port.find('.//service')
-                    if service_element is not None:
-                        service = service_element.attrib.get('name')
-                        if service_element.attrib.get("method") == "table":
-                            service += "?"
-                        if service_element.attrib.get("tunnel", "none") == "ssl":
-                            service += "/tls"
-                    else:
-                        service = "unknown?"                        
-                    if state == 'open':
-                        h.add_port(portid, protocol, state, service)
+    def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
+        for port in host.findall(".//port"):
+            protocol: str = port.attrib.get("protocol", "")
+            portid: str = port.attrib.get("portid", "")
+            state_elem = port.find(".//state")
+            state: str = (
+                state_elem.attrib.get("state", "") if state_elem is not None else ""
+            )
+            service_element = port.find(".//service")
 
-                data[host_ip] = h
+            if service_element is not None:
+                service: str = service_element.attrib.get("name", "")
+                if service_element.attrib.get("method") == "table":
+                    service += "?"
+                if service_element.attrib.get("tunnel", "none") == "ssl":
+                    service += "/tls"
+            else:
+                service = "unknown?"
 
-    return data
+            if state == "open":
+                h.add_port(portid, protocol, state, service)
 
-def merge_host_data(global_state, new_data):
+
+def merge_host_data(
+    global_state: Dict[str, HostScanData], new_data: Dict[str, HostScanData]
+) -> Tuple[List[HostScanData], Dict[str, List[PortDetails]]]:
     new_hosts = []
     updated_hosts = {}
 
@@ -210,53 +256,66 @@ def merge_host_data(global_state, new_data):
     return new_hosts, updated_hosts
 
 
-def print_changes(new_hosts, updated_hosts):
-    if new_hosts:
-        print("New hosts added:")
-        for host in new_hosts:
-            print(host)
+def setup_logging(log_level: str = "INFO") -> None:
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
-    if updated_hosts:
-        print("Hosts with new ports:")
-        for ip, ports in updated_hosts.items():
-            ports_str = ", ".join(str(port) for port in ports)
-            print(f"{ip} {ports_str}")            
-                
 
-def parse_file(parse_function, file: str, global_state: dict):
-    print()
-    print(f"Trying to load file {file}")
-    try: 
-        scan_results = parse_function(file)
-        new_hosts, updated_hosts = merge_host_data(global_state, scan_results)
-        print_changes(new_hosts, updated_hosts)
-    except ParseError:
-        print("Could not load, invalid XML")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Unitas Scan Parser")
+    parser.add_argument("scan_folder", help="Folder containing scan files")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level",
+    )
+    args = parser.parse_args()
 
-def main():
-    directory = 'scans2'  # Adjust this path
-    nessus_files = glob_files(directory, ['nessus'])
-    nmap_files = glob_files(directory, ['xml'])  # Adjust if your nmap files have different extensions
+    setup_logging(args.log_level)
 
+    parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
+        args.scan_folder
+    )
     global_state = load_from_file()
 
-    # Process Nessus files
-    for file in nessus_files:
-        parse_file(parse_nessus, file, global_state)
+    if not parsers:
+        logging.error("Could not load any kind of scan files")
+        return
 
-    # Process Nmap files
-    for file in nmap_files:
-        parse_file(parse_nmap, file, global_state)
+    for p in parsers:
+        try:
+            scan_results = p.parse()
+            new_hosts, updated_hosts = merge_host_data(global_state, scan_results)
+            if new_hosts:
+                logging.info(
+                    "New hosts added: %s", ", ".join(str(host) for host in new_hosts)
+                )
+            if updated_hosts:
+                for ip, ports in updated_hosts.items():
+                    logging.info(
+                        "Host %s updated with new ports: %s",
+                        ip,
+                        ", ".join(str(port) for port in ports),
+                    )
+        except ParseError:
+            logging.error("Could not load %s, invalid XML", p.file_path)
 
-    # Output results
-    print("|IP|Port|Status|Comment")
-    print("|--|--|--|---|")
-    for k, v in global_state.items():
-        for row in v.to_markdown_rows():
-            print(row)
+    if global_state:
+        logging.info("Scan Results:")
+        print("|IP|Port|Status|Comment")
+        print("|--|--|--|---|")
+        for host in global_state.values():
+            for row in host.to_markdown_rows():
+                print(row)
+    else:
+        logging.info("Did not find any open ports!")
 
     save_to_file(global_state)
 
-    
+
 if __name__ == "__main__":
     main()
