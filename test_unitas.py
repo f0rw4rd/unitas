@@ -1,5 +1,11 @@
 import unittest
-from unitas import PortDetails, HostScanData, merge_host_data, merge_states
+from unitas import (
+    PortDetails,
+    HostScanData,
+    merge_host_data,
+    merge_states,
+    search_port_or_service,
+)
 
 
 class TestPortDetails(unittest.TestCase):
@@ -61,6 +67,51 @@ class TestPortDetails(unittest.TestCase):
 
         except ValueError:
             self.fail("PortDetails raised ValueError unexpectedly!")
+
+
+class TestSearchFunction(unittest.TestCase):
+    def setUp(self):
+        self.global_state = {
+            "192.168.1.1": HostScanData("192.168.1.1"),
+            "192.168.1.2": HostScanData("192.168.1.2"),
+            "192.168.1.3": HostScanData("192.168.1.3"),
+        }
+        self.global_state["192.168.1.1"].add_port("80", "tcp", "open", "http")
+        self.global_state["192.168.1.1"].add_port("443", "tcp", "open", "https")
+        self.global_state["192.168.1.2"].add_port("22", "tcp", "open", "ssh")
+        self.global_state["192.168.1.3"].add_port("80", "tcp", "open", "http")
+        self.global_state["192.168.1.3"].add_port("3306", "tcp", "open", "mysql")
+
+    def test_search_by_port(self):
+        result = search_port_or_service(self.global_state, " 80")
+        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
+
+        result = search_port_or_service(self.global_state, "22")
+        self.assertEqual(result, ["192.168.1.2"])
+
+        result = search_port_or_service(self.global_state, "3306")
+        self.assertEqual(result, ["192.168.1.3"])
+
+    def test_search_by_service(self):
+        result = search_port_or_service(self.global_state, "http")
+        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
+
+        result = search_port_or_service(self.global_state, "ssh")
+        self.assertEqual(result, ["192.168.1.2"])
+
+        result = search_port_or_service(self.global_state, "mysql")
+        self.assertEqual(result, ["192.168.1.3"])
+
+    def test_case_insensitive_service_search(self):
+        result = search_port_or_service(self.global_state, "HTTP")
+        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
+
+    def test_search_non_existent(self):
+        result = search_port_or_service(self.global_state, "8080")
+        self.assertEqual(result, [])
+
+        result = search_port_or_service(self.global_state, "ftp")
+        self.assertEqual(result, [])
 
 
 class TestHostScanData(unittest.TestCase):

@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 from typing import Dict, List, Optional, Tuple, Any, Type
 import os
+import concurrent.futures
 import argparse
 import re
 import logging
@@ -297,12 +298,36 @@ def merge_host_data(
     return new_hosts, updated_hosts
 
 
+class CustomFormatter(logging.Formatter):
+    """
+    Custom logging formatter to add tags for different log levels.
+    """
+
+    def format(self, record):
+        level_tags = {
+            logging.DEBUG: "[d]",
+            logging.INFO: "[+]",
+            logging.WARNING: "[!]",
+            logging.ERROR: "[e]",
+            logging.CRITICAL: "[c]",
+        }
+        record.leveltag = level_tags.get(record.levelno, "[?]")
+        return super().format(record)
+
+
 def setup_logging(log_level: str = "INFO") -> None:
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f"Invalid log level: {log_level}")
+
+    formatter = CustomFormatter("%(leveltag)s %(message)s")
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    logger = logging.getLogger()
+    logger.setLevel(numeric_level)
+    logger.addHandler(handler)
 
 
 def save_markdown_state(state: Dict[str, HostScanData], filename: str):
@@ -346,7 +371,67 @@ def merge_states(
     return merged_state
 
 
+def search_port_or_service(
+    global_state: Dict[str, HostScanData], search_terms: List[str]
+) -> List[str]:
+    matching_ips = set()
+    for ip, host_data in global_state.items():
+        for port in host_data.ports:
+            if any(
+                term.lower() in port.port.lower()
+                or term.lower() in port.service.lower()
+                for term in search_terms
+            ):
+                matching_ips.add(ip)
+                break
+    return sorted(list(matching_ips))
+
+
 # TBD: test the loading and generation of nmap files
+
+
+def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
+    """
+    Parse a single file and return the results.
+
+    :param parser: ScanParser instance
+    :return: Tuple of (file_path, parsed_data)
+    """
+    try:
+        return parser.file_path, parser.parse()
+    except ParseError:
+        logging.error(f"Could not load {parser.file_path}, invalid XML")
+        return parser.file_path, {}
+
+
+def parse_files_concurrently(
+    parsers: List[ScanParser], max_workers: int = 5
+) -> Dict[str, HostScanData]:
+    global_state: Dict[str, HostScanData] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_parser = {
+            executor.submit(parse_file, parser): parser for parser in parsers
+        }
+        for future in concurrent.futures.as_completed(future_to_parser):
+            parser = future_to_parser[future]
+            try:
+                file_path, scan_results = future.result()
+                new_hosts, updated_hosts = merge_host_data(global_state, scan_results)
+                if new_hosts:
+                    logging.debug(
+                        f"New hosts added from {file_path}: %s",
+                        ", ".join(str(host) for host in new_hosts),
+                    )
+                if updated_hosts:
+                    for ip, ports in updated_hosts.items():
+                        logging.debug(
+                            f"Host %s updated with new ports from {file_path}: %s",
+                            ip,
+                            ", ".join(str(port) for port in ports),
+                        )
+            except Exception as exc:
+                logging.error(f"{parser.file_path} generated an exception: {exc}")
+    return global_state
 
 
 def main() -> None:
@@ -361,6 +446,11 @@ def main() -> None:
     parser.add_argument(
         "--update", action="store_true", help="Update existing state.md file"
     )
+    parser.add_argument(
+        "--search",
+        help="Search for specific port numbers or service names (comma-separated)",
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -373,23 +463,23 @@ def main() -> None:
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
         args.scan_folder
     )
-    global_state = {}
-
     if not parsers:
         logging.error("Could not load any kind of scan files")
         return
+
+    global_state = parse_files_concurrently(parsers)
 
     for p in parsers:
         try:
             scan_results = p.parse()
             new_hosts, updated_hosts = merge_host_data(global_state, scan_results)
             if new_hosts:
-                logging.info(
+                logging.debug(
                     "New hosts added: %s", ", ".join(str(host) for host in new_hosts)
                 )
             if updated_hosts:
                 for ip, ports in updated_hosts.items():
-                    logging.info(
+                    logging.debug(
                         "Host %s updated with new ports: %s",
                         ip,
                         ", ".join(str(port) for port in ports),
@@ -398,8 +488,22 @@ def main() -> None:
             logging.error("Could not load %s, invalid XML", p.file_path)
 
     final_state = merge_states(existing_state, global_state)
+    if not final_state:
+        logging.error("Did not find any open ports!")
+        return
 
-    if final_state:
+    if args.search:
+        search_terms = [term.strip().lower() for term in args.search.split(",")]
+        matching_ips = search_port_or_service(final_state, search_terms)
+        if matching_ips:
+            logging.info(
+                f"Systems with ports/services matching '{', '.join(search_terms)}':"
+            )
+            for ip in matching_ips:
+                print(ip)
+        else:
+            logging.info(f"No systems found with port/service '{args.search}'")
+    else:
         md_converter = MarkdownConvert(final_state)
         md_content = md_converter.convert()
 
@@ -408,8 +512,6 @@ def main() -> None:
 
         save_markdown_state(final_state, "state.md")
         logging.info("Updated state saved to state.md")
-    else:
-        logging.info("Did not find any open ports!")
 
 
 if __name__ == "__main__":
