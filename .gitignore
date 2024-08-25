@@ -2,6 +2,7 @@
 test/
 .state.pkl
 state.md
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

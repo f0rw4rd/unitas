@@ -31,6 +31,23 @@ class PortDetails:
             "service": self.service,
         }
 
+    def __eq__(self, other):
+        if not isinstance(other, PortDetails):
+            return NotImplemented
+        return self.to_dict() == other.to_dict()
+
+    def update(self, other: "PortDetails"):
+        # check if service should be overwritten
+        update_service = False
+        if other.service != "unknown?" and self.service == "unknown?":
+            update_service = True
+        elif "?" not in other.service and "?" in self.service:
+            update_service = True
+
+        if update_service:
+            logging.debug(f"Updating service from {self.service} -> {other.service}")
+            self.service = other.service
+
     @staticmethod
     def is_valid_port(port: str) -> bool:
         try:
@@ -175,7 +192,6 @@ class MarkdownConvert(Convert):
                     status.strip() or "open",
                     service.strip(),
                 )
-                # TBD: integrate comments
                 if hostname:
                     result[ip].set_hostname(hostname)
         return result
@@ -322,24 +338,6 @@ class NmapParser(ScanParser):
                 h.add_port(portid, protocol, state, service)
 
 
-def merge_host_data(
-    global_state: Dict[str, HostScanData], new_data: Dict[str, HostScanData]
-) -> Tuple[List[HostScanData], Dict[str, List[PortDetails]]]:
-    new_hosts = []
-    updated_hosts = {}
-
-    for ip, host_data in new_data.items():
-        if ip in global_state:
-            new_ports = global_state[ip].merge(host_data)
-            if new_ports:
-                updated_hosts[ip] = new_ports
-        else:
-            global_state[ip] = host_data
-            new_hosts.append(host_data)
-
-    return new_hosts, updated_hosts
-
-
 class CustomFormatter(logging.Formatter):
     """
     Custom logging formatter to add tags for different log levels.
@@ -399,17 +397,22 @@ def merge_states(
     old_state: Dict[str, HostScanData], new_state: Dict[str, HostScanData]
 ) -> Dict[str, HostScanData]:
     merged_state = old_state.copy()
-    for ip, host_data in new_state.items():
-        if ip in merged_state:
-            # Merge port information
-            existing_ports = {(p.port, p.protocol): p for p in merged_state[ip].ports}
-            for new_port in host_data.ports:
-                key = (new_port.port, new_port.protocol)
-                if key not in existing_ports or new_port.service != "unknown?":
-                    existing_ports[key] = new_port
-            merged_state[ip].ports = list(existing_ports.values())
+    for ip, new_host_data in new_state.items():
+        if ip not in merged_state:
+            logging.debug(f"Added host {ip}")
+            merged_state[ip] = new_host_data
         else:
-            merged_state[ip] = host_data
+            existing_ports = {(p.port, p.protocol): p for p in merged_state[ip].ports}
+            for new_port in new_host_data.ports:
+                key = (new_port.port, new_port.protocol)
+                if key in existing_ports:
+                    if not existing_ports[key] == new_port:
+                        existing_ports[key].update(new_port)
+                else:
+                    logging.debug(f"Added port {new_port}")
+                    existing_ports[key] = new_port
+
+            merged_state[ip].ports = list(existing_ports.values())
     return merged_state
 
 
@@ -449,19 +452,8 @@ def parse_files_concurrently(
             parser = future_to_parser[future]
             try:
                 file_path, scan_results = future.result()
-                new_hosts, updated_hosts = merge_host_data(global_state, scan_results)
-                if new_hosts:
-                    logging.debug(
-                        f"New hosts added from {file_path}: %s",
-                        ", ".join(str(host) for host in new_hosts),
-                    )
-                if updated_hosts:
-                    for ip, ports in updated_hosts.items():
-                        logging.debug(
-                            f"Host %s updated with new ports from {file_path}: %s",
-                            ip,
-                            ", ".join(str(port) for port in ports),
-                        )
+                global_state = merge_states(global_state, scan_results)
+
             except Exception as exc:
                 logging.error(f"{parser.file_path} generated an exception: {exc}")
     return global_state
@@ -505,18 +497,11 @@ def main() -> None:
     for p in parsers:
         try:
             scan_results = p.parse()
-            new_hosts, updated_hosts = merge_host_data(global_state, scan_results)
+            new_hosts = merge_states(global_state, scan_results)
             if new_hosts:
                 logging.debug(
                     "New hosts added: %s", ", ".join(str(host) for host in new_hosts)
                 )
-            if updated_hosts:
-                for ip, ports in updated_hosts.items():
-                    logging.debug(
-                        "Host %s updated with new ports: %s",
-                        ip,
-                        ", ".join(str(port) for port in ports),
-                    )
         except ParseError:
             logging.error("Could not load %s, invalid XML", p.file_path)
         except ValueError as e:
