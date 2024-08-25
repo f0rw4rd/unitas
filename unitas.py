@@ -50,7 +50,11 @@ class PortDetails:
         update_service = False
         if other.service != "unknown?" and self.service == "unknown?":
             update_service = True
+        # without the question mark, it was a service scan
         elif "?" not in other.service and "?" in self.service:
+            update_service = True
+        # if the tag is longer e.g. http/tls instead of http, take it
+        elif "?" not in other.service and len(other.service) > len(self.service):
             update_service = True
 
         if update_service:
@@ -94,23 +98,21 @@ class HostScanData:
         except ValueError:
             return False
 
-    @staticmethod
-    def overwrite_service(old_service: str, new_service: str) -> bool:
-        if "?" in old_service and "?" not in new_service:
-            return True
-        if "?" not in new_service and len(new_service) > len(old_service):
-            return True
-        return False
-
     def add_port(
-        self, port: str, protocol: str, state: str, service: str = "unknown?"
+        self,
+        port: str,
+        protocol: str,
+        state: str,
+        service: str = "unknown?",
+        comment: str = "",
     ) -> None:
+        new_port = PortDetails(port, protocol, state, service, comment)
         for p in self.ports:
             if p.port == port and p.protocol == protocol:
-                if self.overwrite_service(p.service, service):
-                    p.service = service
+                p.update(new_port)
                 return
-        self.ports.append(PortDetails(port, protocol, state, service))
+        # if the port did not exist, just add it
+        self.ports.append(new_port)
 
     def set_hostname(self, hostname: str) -> None:
         self.hostname = hostname
@@ -187,30 +189,32 @@ class MarkdownConvert(Convert):
         for host in self.global_state.values():
             for port in host.get_sorted_ports():
                 output.append(
-                    f"|{host.ip}|{host.hostname}|{port.port}/{port.protocol}({port.service})|||"
+                    f"|{host.ip}|{host.hostname}|{port.port}/{port.protocol}({port.service})|{port.state}|{port.comment}|"
                 )
-        return "\n".join(output)
+        return "\n".join(output) + "\n"
 
     def parse(self, content: str) -> Dict[str, HostScanData]:
         lines = content.strip().split("\n")[2:]  # Skip header and separator
         result = {}
         for line in lines:
             match = re.match(
-                r"\|([^|]+)\|([^|]+)\|([^|]+)/([^|]+)\(([^)]+)\)\|([^|]*)\|([^|]*)\|",
-                line,
+                r"\s*\|([^|]+)\|\s*([^|]*)\s*\|\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|",
+                line.strip(),
             )
             if match:
                 ip, hostname, port, protocol, service, status, comment = match.groups()
+                ip = ip.strip()
                 if ip not in result:
-                    result[ip] = HostScanData(ip.strip())
+                    result[ip] = HostScanData(ip)
+                    if hostname.strip():
+                        result[ip].set_hostname(hostname.strip())
                 result[ip].add_port(
                     port.strip(),
                     protocol.strip(),
-                    status.strip() or "open",
+                    status.strip() or "TBD",
                     service.strip(),
+                    comment.strip(),
                 )
-                if hostname:
-                    result[ip].set_hostname(hostname)
         return result
 
 

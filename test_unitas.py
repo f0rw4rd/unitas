@@ -4,6 +4,7 @@ from unitas import (
     HostScanData,
     merge_states,
     search_port_or_service,
+    MarkdownConvert,
 )
 
 
@@ -248,12 +249,6 @@ class TestHostScanData(unittest.TestCase):
         sorted_ports = self.host.get_sorted_ports()
         self.assertEqual([p.port for p in sorted_ports], ["22", "80", "443"])
 
-    def test_overwrite_service(self):
-        self.assertTrue(HostScanData.overwrite_service("http?", "http"))
-        self.assertFalse(HostScanData.overwrite_service("http", "http?"))
-        self.assertTrue(HostScanData.overwrite_service("http", "http-alt"))
-        self.assertFalse(HostScanData.overwrite_service("http-alt", "http"))
-
 
 class TestMergeFunctions(unittest.TestCase):
     def test_merge_states(self):
@@ -276,8 +271,99 @@ class TestMergeFunctions(unittest.TestCase):
 
         self.assertEqual(len(merged_state), 3)
         self.assertEqual(len(merged_state["192.168.1.1"].ports), 2)
-        self.assertEqual(merged_state["192.168.1.1"].ports[0].service, "http")
+        self.assertEqual(merged_state["192.168.1.1"].ports[0].service, "http-alt")
         self.assertIn("192.168.1.3", merged_state)
+
+
+class TestMarkdownConvert(unittest.TestCase):
+    def setUp(self):
+        self.global_state = {
+            "192.168.1.1": HostScanData("192.168.1.1"),
+            "192.168.1.2": HostScanData("192.168.1.2"),
+        }
+        self.global_state["192.168.1.1"].set_hostname("host1.local")
+        self.global_state["192.168.1.1"].add_port("80", "tcp", "Done", "http")
+        self.global_state["192.168.1.1"].add_port("443", "tcp", "TBD", "https?")
+        self.global_state["192.168.1.2"].add_port("22", "tcp", "Done", "ssh")
+
+        self.converter = MarkdownConvert(self.global_state)
+
+    def test_convert_empty_state(self):
+        empty_converter = MarkdownConvert({})
+        expected_output = "|IP|Hostname|Port|Status|Comment|\n|--|--|--|--|---|\n"
+        self.assertEqual(empty_converter.convert(), expected_output)
+
+    def test_convert_with_data(self):
+        expected_output = (
+            "|IP|Hostname|Port|Status|Comment|\n"
+            "|--|--|--|--|---|\n"
+            "|192.168.1.1|host1.local|80/tcp(http)|Done||\n"
+            "|192.168.1.1|host1.local|443/tcp(https?)|TBD||\n"
+            "|192.168.1.2||22/tcp(ssh)|Done||\n"
+        )
+        self.assertEqual(self.converter.convert(), expected_output)
+
+    def test_parse_empty_content(self):
+        content = "|IP|Hostname|Port|Status|Comment|\n|--|--|--|--|---|\n"
+        result = self.converter.parse(content)
+        self.assertEqual(len(result), 0)
+
+    def test_parse_with_data(self):
+        content = (
+            "|IP|Hostname|Port|Status|Comment|\n"
+            "|--|--|--|--|---|\n"
+            "|192.168.1.1|host1.local|80/tcp(http)|Done|Web server|\n"
+            "|192.168.1.1|host1.local|443/tcp(https)|TBD||\n"
+            "|192.168.1.2||22/tcp(ssh)|Done||\n"
+        )
+        result = self.converter.parse(content)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result["192.168.1.1"].hostname, "host1.local")
+        self.assertEqual(len(result["192.168.1.1"].ports), 2)
+        self.assertEqual(result["192.168.1.1"].ports[0].service, "http")
+        self.assertEqual(result["192.168.1.1"].ports[0].state, "Done")
+        self.assertEqual(result["192.168.1.2"].ports[0].service, "ssh")
+
+    def test_parse_with_missing_fields(self):
+        content = (
+            "|IP|Hostname|Port|Status|Comment|\n"
+            "|--|--|--|--|---|\n"
+            "|192.168.1.1||80/tcp(http)|||\n"
+        )
+        result = self.converter.parse(content)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result["192.168.1.1"].hostname, "")
+        self.assertEqual(result["192.168.1.1"].ports[0].state, "TBD")  # Default value
+
+    def test_parse_with_invalid_lines(self):
+        content = (
+            "|IP|Hostname|Port|Status|Comment|\n"
+            "|--|--|--|--|---|\n"
+            "|192.168.1.1|host1.local|80/tcp(http)|Done|Web server|\n"
+            "Invalid line\n"
+            "|192.168.1.2||22/tcp(ssh)|Done||\n"
+        )
+        result = self.converter.parse(content)
+
+        self.assertEqual(len(result), 2)
+        self.assertIn("192.168.1.1", result)
+        self.assertIn("192.168.1.2", result)
+
+    def test_parse_with_extra_whitespace(self):
+        content = (
+            "|IP|Hostname|Port|Status|Comment|\n"
+            "|--|--|--|--|---|\n"
+            "| 192.168.1.1 | host1.local | 80/tcp(http) | Done | Web server |\n"
+        )
+        result = self.converter.parse(content)
+
+        self.assertEqual(len(result), 1)
+        self.assertIn("192.168.1.1", result)
+        self.assertEqual(result["192.168.1.1"].hostname, "host1.local")
+        self.assertEqual(result["192.168.1.1"].ports[0].service, "http")
+        self.assertEqual(result["192.168.1.1"].ports[0].state, "Done")
 
 
 if __name__ == "__main__":
