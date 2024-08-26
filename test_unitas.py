@@ -151,6 +151,19 @@ class TestSearchFunction(unittest.TestCase):
         result = search_port_or_service(self.global_state, ["3306"], False)
         self.assertEqual(result, ["192.168.1.3:3306"])
 
+    def test_search_by_service_url(self):
+        result = search_port_or_service(self.global_state, ["ssh"], url=True)
+        self.assertEqual(result, ["ssh://192.168.1.2:22"])
+
+    def test_case_insensitive_search_url(self):
+        result = search_port_or_service(self.global_state, ["HTTP"], url=True)
+        self.assertEqual(result, ["http://192.168.1.1:80", "http://192.168.1.3:80"])
+
+    def test_service_with_question_mark_url(self):
+        self.global_state["192.168.1.2"].add_port("8080", "tcp", "TBD", "http-alt?")
+        result = search_port_or_service(self.global_state, ["8080"], url=True)
+        self.assertEqual(result, ["http-alt://192.168.1.2:8080"])
+
     def test_search_by_service(self):
         result = search_port_or_service(self.global_state, ["http"], False)
         self.assertEqual(result, ["192.168.1.1:80", "192.168.1.3:80"])
