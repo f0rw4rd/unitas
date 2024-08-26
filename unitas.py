@@ -58,6 +58,10 @@ class PortDetails:
         update_service = False
         if other.service != "unknown?" and self.service == "unknown?":
             update_service = True
+        if (
+            not "unknown" in other.service and not "?" in other.service
+        ) and self.service == "unknown":
+            update_service = True
         # without the question mark, it was a service scan
         elif "?" not in other.service and "?" in self.service:
             update_service = True
@@ -507,8 +511,8 @@ def search_port_or_service(
     for ip, host_data in global_state.items():
         for port in host_data.ports:
             if any(
-                term.lower().strip() in port.port.lower()
-                or term.lower().strip() in port.service.lower()
+                term.lower().strip() == port.port.lower()
+                or term.lower().strip() == port.service.lower()
                 for term in search_terms
             ):
                 port_nr = port.port
