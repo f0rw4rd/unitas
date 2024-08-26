@@ -140,6 +140,7 @@ class TestSearchFunction(unittest.TestCase):
         self.global_state["192.168.1.2"].add_port("22", "tcp", "open", "ssh")
         self.global_state["192.168.1.3"].add_port("80", "tcp", "open", "http")
         self.global_state["192.168.1.3"].add_port("3306", "tcp", "open", "mysql")
+        self.global_state["192.168.1.3"].add_port("12345", "tcp", "open", "rdp?")
 
     def test_search_by_port(self):
         result = search_port_or_service(self.global_state, [" 80"], False)
@@ -184,6 +185,10 @@ class TestSearchFunction(unittest.TestCase):
 
         result = search_port_or_service(self.global_state, ["ftp"], False)
         self.assertEqual(result, [])
+
+    def test_search_for_question_mark(self):
+        result = search_port_or_service(self.global_state, ["rdp"], False)
+        self.assertEqual(result, ["192.168.1.3:12345"])
 
     def test_search_for_two_ports_on_the_same_host(self):
         result = search_port_or_service(self.global_state, ["http", "https"], False)

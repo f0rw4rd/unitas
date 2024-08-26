@@ -511,9 +511,9 @@ def search_port_or_service(
     for ip, host_data in global_state.items():
         for port in host_data.ports:
             for term in search_terms:
-                if (
-                    term.lower().strip() == port.port.lower()
-                    or term.lower().strip() == port.service.lower()
+                if term.lower().strip() == port.port.lower() or (
+                    term.lower().strip() == port.service.lower()
+                    or term.lower().strip() + "?" == port.service.lower()
                 ):
                     port_nr = port.port
                     if not url:
@@ -550,6 +550,20 @@ def parse_files_concurrently(
             except Exception as exc:
                 logging.error(f"{parser.file_path} generated an exception: {exc}")
     return global_state
+
+
+def filter_uncertain_services(
+    global_state: Dict[str, HostScanData]
+) -> Dict[str, HostScanData]:
+    certain_services = {}
+    for ip, host_data in global_state.items():
+        service_ports = [port for port in host_data.ports if not "?" in port.service]
+        if service_ports:
+            new_host_data = HostScanData(ip)
+            new_host_data.hostname = host_data.hostname
+            new_host_data.ports = service_ports
+            certain_services[ip] = new_host_data
+    return certain_services
 
 
 def main() -> None:
@@ -631,6 +645,10 @@ def main() -> None:
     if not final_state:
         logging.error("Did not find any open ports!")
         return
+
+    if args.service:
+        logging.info("Filtering non-service scanned ports")
+        final_state = filter_uncertain_services(final_state)
 
     if args.search:
         search_terms = [term.strip().lower() for term in args.search.split(",")]
