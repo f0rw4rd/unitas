@@ -510,18 +510,18 @@ def search_port_or_service(
     matching_ips = set()
     for ip, host_data in global_state.items():
         for port in host_data.ports:
-            if any(
-                term.lower().strip() == port.port.lower()
-                or term.lower().strip() == port.service.lower()
-                for term in search_terms
-            ):
-                port_nr = port.port
-                if not url:
-                    matching_ips.add(f"{ip}:{port_nr}")
-                else:
-                    service = port.service.replace("?", "")
-                    matching_ips.add(f"{service}://{ip}:{port_nr}")
-                break
+            for term in search_terms:
+                if (
+                    term.lower().strip() == port.port.lower()
+                    or term.lower().strip() == port.service.lower()
+                ):
+                    port_nr = port.port
+                    if not url:
+                        matching_ips.add(f"{ip}:{port_nr}")
+                    else:
+                        service = port.service.replace("?", "")
+                        matching_ips.add(f"{service}://{ip}:{port_nr}")
+                    break
     return sorted(list(matching_ips))
 
 

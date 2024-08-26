@@ -172,6 +172,12 @@ class TestSearchFunction(unittest.TestCase):
         result = search_port_or_service(self.global_state, ["ftp"], False)
         self.assertEqual(result, [])
 
+    def test_search_for_two_ports_on_the_same_host(self):
+        result = search_port_or_service(self.global_state, ["http", "https"], False)
+        self.assertEqual(
+            result, ["192.168.1.1:443", "192.168.1.1:80", "192.168.1.3:80"]
+        )
+
     # TBD add testcase for the URL parameter
 
 
