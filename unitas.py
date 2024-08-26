@@ -13,6 +13,9 @@ from abc import ABC, abstractmethod
 from functools import lru_cache
 
 
+__version__ = "1.0.0"
+
+
 class PortDetails:
     def __init__(
         self,
@@ -272,7 +275,7 @@ class ScanParser(ABC):
                 f'Looking in folder "{dir}" for "{ext}" files for parser {cls.__name__}'
             )
             for f in glob.glob(f"{dir}/**/*.{ext}", recursive=True):
-                logging.debug(f"Adding file {f}")
+                logging.debug(f"Adding file {f} for parser {cls.__name__}")
                 try:
                     files.append(cls(f))
                 except ParseError as e:
@@ -412,10 +415,8 @@ class CustomFormatter(logging.Formatter):
         return super().format(record)
 
 
-def setup_logging(log_level: str = "INFO") -> None:
-    numeric_level = getattr(logging, log_level.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError(f"Invalid log level: {log_level}")
+def setup_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
 
     formatter = CustomFormatter("%(leveltag)s %(message)s")
 
@@ -423,7 +424,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     handler.setFormatter(formatter)
 
     logger = logging.getLogger()
-    logger.setLevel(numeric_level)
+    logger.setLevel(level)
     logger.addHandler(handler)
 
 
@@ -517,16 +518,29 @@ def parse_files_concurrently(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Unitas Scan Parser")
+    parser = argparse.ArgumentParser(
+        description=f"Unitas v{__version__}: A network scan parser and analyzer",
+        epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("scan_folder", help="Folder containing scan files")
     parser.add_argument(
-        "--log-level",
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Set the logging level",
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Enable verbose output (sets log level to DEBUG)",
     )
     parser.add_argument(
-        "--update", action="store_true", help="Update existing state.md file"
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show the version number and exit",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update existing markdown from state.md or stdin",
     )
     parser.add_argument(
         "--search",
@@ -540,7 +554,9 @@ def main() -> None:
     else:
         existing_state = {}
 
-    setup_logging(args.log_level)
+    setup_logging(args.verbose)
+
+    logging.info(f"Unitas v{__version__} starting up.")
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
         args.scan_folder
@@ -585,10 +601,11 @@ def main() -> None:
         md_content = md_converter.convert()
 
         logging.info("Scan Results (Markdown):")
+        print()
         print(md_content)
 
-        save_markdown_state(final_state, "state.md")
-        logging.info("Updated state saved to state.md")
+        # save_markdown_state(final_state, "state.md")
+        # logging.info("Updated state saved to state.md")
 
 
 if __name__ == "__main__":
