@@ -55,6 +55,17 @@ class TestPortDetails(unittest.TestCase):
         port1.update(port2)
         self.assertEqual(port1.service, "http")
 
+    def test_update_service_unknown_to_known_with_unknown_as_service(self):
+        port1 = PortDetails("80", "tcp", "open", "unknown")
+        port2 = PortDetails("80", "tcp", "open", "http")
+        port1.update(port2)
+        self.assertEqual(port1.service, "http")
+
+        port1 = PortDetails("80", "tcp", "open", "unknown")
+        port2 = PortDetails("80", "tcp", "open", "http?")
+        port1.update(port2)
+        self.assertEqual(port1.service, "unknown")
+
     def test_update_service_uncertain_to_certain(self):
         port1 = PortDetails("443", "tcp", "open", "https?")
         port2 = PortDetails("443", "tcp", "open", "https")

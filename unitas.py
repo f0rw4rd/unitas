@@ -58,8 +58,6 @@ class PortDetails:
         update_service = False
         if other.service != "unknown?" and self.service == "unknown?":
             update_service = True
-        if other.service != "unknown" and self.service == "unknown":
-            update_service = True
         # without the question mark, it was a service scan
         elif "?" not in other.service and "?" in self.service:
             update_service = True
@@ -340,12 +338,13 @@ class NessusParser(ScanParser):
             protocol: str = item.attrib.get("protocol", "")
             service: str = item.attrib.get("svc_name", "")
             service = PortDetails.get_service_name(service)
+            comment: str = ""
             if "TLS" in item.attrib.get("pluginName", "") or "SSL" in item.attrib.get(
                 "pluginName", ""
             ):
-                service += "/tls"
+                comment = "Has TLS"
             state: str = "TBD"
-            host.add_port(port, protocol, state, service)
+            host.add_port(port, protocol, state, service, comment)
 
     def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
         for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
@@ -397,13 +396,14 @@ class NmapParser(ScanParser):
                 state_elem.attrib.get("state", "") if state_elem is not None else ""
             )
             service_element = port.find(".//service")
+            comment: str = ""
 
             if service_element is not None:
                 service: str = service_element.attrib.get("name", "")
                 # need or service will not be overwritten by other services
                 if service == "tcpwrapped":
-                    service = "unknown"
-                if service_element.attrib.get("method") == "table":
+                    service = "unknown?"
+                elif service_element.attrib.get("method") == "table":
                     service = PortDetails.get_service_name_for_port(
                         portid, protocol, service
                     )
@@ -412,12 +412,16 @@ class NmapParser(ScanParser):
                     service = PortDetails.get_service_name(service)
 
                 if service_element.attrib.get("tunnel", "none") == "ssl":
-                    service += "/tls"
+                    # nmap is not is not consistent with http/tls and https
+                    if service == "http":
+                        service = "https"
+
+                    comment += "Has TLS"
             else:
                 service = "unknown?"
 
             if state == "open":
-                h.add_port(portid, protocol, "TBD", service)
+                h.add_port(portid, protocol, "TBD", service, comment)
 
 
 class CustomFormatter(logging.Formatter):
