@@ -307,6 +307,9 @@ class TestMarkdownConvert(unittest.TestCase):
         content = "|IP|Hostname|Port|Status|Comment|\n|--|--|--|--|---|\n"
         result = self.converter.parse(content)
         self.assertEqual(len(result), 0)
+        content = ""
+        result = self.converter.parse(content)
+        self.assertEqual(len(result), 0)
 
     def test_parse_with_data(self):
         content = (

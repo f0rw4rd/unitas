@@ -227,9 +227,17 @@ class MarkdownConvert(Convert):
         return "\n".join(output) + "\n"
 
     def parse(self, content: str) -> Dict[str, HostScanData]:
-        lines = content.strip().split("\n")[2:]  # Skip header and separator
+        lines = content.strip().split("\n")
+        if len(lines) < 2:
+            logging.error(
+                f"Could not load markdown, markdown was only {len(lines)} lines. are you missing the two line header?"
+            )
+            return {}
+        lines = lines[2:]  # Skip header and separator
         result = {}
+        counter = 1
         for line in lines:
+            counter += 1
             match = re.match(
                 r"\s*\|([^|]+)\|\s*([^|]*)\s*\|\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|",
                 line.strip(),
@@ -248,6 +256,11 @@ class MarkdownConvert(Convert):
                     service.strip(),
                     comment.strip(),
                 )
+            else:
+                logging.error(
+                    f"Markdown error: Failed to parse line nr {counter}: {line}"
+                )
+
         return result
 
 
