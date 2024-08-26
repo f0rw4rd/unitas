@@ -131,35 +131,37 @@ class TestSearchFunction(unittest.TestCase):
         self.global_state["192.168.1.3"].add_port("3306", "tcp", "open", "mysql")
 
     def test_search_by_port(self):
-        result = search_port_or_service(self.global_state, [" 80"])
-        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
+        result = search_port_or_service(self.global_state, [" 80"], False)
+        self.assertEqual(result, ["192.168.1.1:80", "192.168.1.3:80"])
 
-        result = search_port_or_service(self.global_state, ["22"])
-        self.assertEqual(result, ["192.168.1.2"])
+        result = search_port_or_service(self.global_state, ["22"], False)
+        self.assertEqual(result, ["192.168.1.2:22"])
 
-        result = search_port_or_service(self.global_state, ["3306"])
-        self.assertEqual(result, ["192.168.1.3"])
+        result = search_port_or_service(self.global_state, ["3306"], False)
+        self.assertEqual(result, ["192.168.1.3:3306"])
 
     def test_search_by_service(self):
-        result = search_port_or_service(self.global_state, ["http"])
-        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
+        result = search_port_or_service(self.global_state, ["http"], False)
+        self.assertEqual(result, ["192.168.1.1:80", "192.168.1.3:80"])
 
-        result = search_port_or_service(self.global_state, ["ssh"])
-        self.assertEqual(result, ["192.168.1.2"])
+        result = search_port_or_service(self.global_state, ["ssh"], False)
+        self.assertEqual(result, ["192.168.1.2:22"])
 
-        result = search_port_or_service(self.global_state, ["mysql"])
-        self.assertEqual(result, ["192.168.1.3"])
+        result = search_port_or_service(self.global_state, ["mysql"], False)
+        self.assertEqual(result, ["192.168.1.3:3306"])
 
     def test_case_insensitive_service_search(self):
-        result = search_port_or_service(self.global_state, ["HTTP"])
-        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
+        result = search_port_or_service(self.global_state, ["HTTP"], False)
+        self.assertEqual(result, ["192.168.1.1:80", "192.168.1.3:80"])
 
     def test_search_non_existent(self):
-        result = search_port_or_service(self.global_state, ["8080"])
+        result = search_port_or_service(self.global_state, ["8080"], False)
         self.assertEqual(result, [])
 
-        result = search_port_or_service(self.global_state, ["ftp"])
+        result = search_port_or_service(self.global_state, ["ftp"], False)
         self.assertEqual(result, [])
+
+    # TBD add testcase for the URL parameter
 
 
 class TestHostScanData(unittest.TestCase):

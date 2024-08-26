@@ -50,10 +50,15 @@ class PortDetails:
             return NotImplemented
         return self.to_dict() == other.to_dict()
 
+    def __repr__(self) -> str:
+        return f"PortDetails({self.port}/{self.protocol} {self.state} {self.service} {self.comment})"
+
     def update(self, other: "PortDetails"):
         # check if service should be overwritten
         update_service = False
         if other.service != "unknown?" and self.service == "unknown?":
+            update_service = True
+        if other.service != "unknown" and self.service == "unknown":
             update_service = True
         # without the question mark, it was a service scan
         elif "?" not in other.service and "?" in self.service:
@@ -395,6 +400,9 @@ class NmapParser(ScanParser):
 
             if service_element is not None:
                 service: str = service_element.attrib.get("name", "")
+                # need or service will not be overwritten by other services
+                if service == "tcpwrapped":
+                    service = "unknown"
                 if service_element.attrib.get("method") == "table":
                     service = PortDetails.get_service_name_for_port(
                         portid, protocol, service
@@ -402,6 +410,7 @@ class NmapParser(ScanParser):
                     service += "?"
                 else:
                     service = PortDetails.get_service_name(service)
+
                 if service_element.attrib.get("tunnel", "none") == "ssl":
                     service += "/tls"
             else:
@@ -488,7 +497,7 @@ def merge_states(
 
 
 def search_port_or_service(
-    global_state: Dict[str, HostScanData], search_terms: List[str]
+    global_state: Dict[str, HostScanData], search_terms: List[str], url: bool
 ) -> List[str]:
     matching_ips = set()
     for ip, host_data in global_state.items():
@@ -498,7 +507,12 @@ def search_port_or_service(
                 or term.lower().strip() in port.service.lower()
                 for term in search_terms
             ):
-                matching_ips.add(ip)
+                port_nr = port.port
+                if not url:
+                    matching_ips.add(f"{ip}:{port_nr}")
+                else:
+                    service = port.service.replace("?", "")
+                    matching_ips.add(f"{service}://{ip}:{port_nr}")
                 break
     return sorted(list(matching_ips))
 
@@ -559,6 +573,18 @@ def main() -> None:
         "--search",
         help="Search for specific port numbers or service names (comma-separated)",
     )
+    parser.add_argument(
+        "--url",
+        action="store_true",
+        default=False,
+        help="Adds the protocol of the port as URL prefix",
+    )
+    parser.add_argument(
+        "--service",
+        action="store_true",
+        default=False,
+        help="Show only service scanned ports",
+    )
 
     args = parser.parse_args()
 
@@ -600,7 +626,7 @@ def main() -> None:
 
     if args.search:
         search_terms = [term.strip().lower() for term in args.search.split(",")]
-        matching_ips = search_port_or_service(final_state, search_terms)
+        matching_ips = search_port_or_service(final_state, search_terms, args.url)
         if matching_ips:
             logging.info(
                 f"Systems with ports/services matching '{', '.join(search_terms)}':"
