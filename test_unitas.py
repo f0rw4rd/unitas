@@ -408,16 +408,16 @@ class TestSearchFunction(unittest.TestCase):
         self.assertEqual(result, ["192.168.1.3:3306"])
 
     def test_search_by_service_url(self):
-        result = search_port_or_service(self.global_state, ["ssh"], url=True)
+        result = search_port_or_service(self.global_state, ["ssh"], with_url=True)
         self.assertEqual(result, ["ssh://192.168.1.2:22"])
 
     def test_case_insensitive_search_url(self):
-        result = search_port_or_service(self.global_state, ["HTTP"], url=True)
+        result = search_port_or_service(self.global_state, ["HTTP"], with_url=True)
         self.assertEqual(result, ["http://192.168.1.1:80", "http://192.168.1.3:80"])
 
     def test_service_with_question_mark_url(self):
         self.global_state["192.168.1.2"].add_port("8080", "tcp", "TBD", "http-alt?")
-        result = search_port_or_service(self.global_state, ["8080"], url=True)
+        result = search_port_or_service(self.global_state, ["8080"], with_url=True)
         self.assertEqual(result, ["http-alt://192.168.1.2:8080"])
 
     def test_search_by_service(self):
@@ -450,8 +450,6 @@ class TestSearchFunction(unittest.TestCase):
         self.assertEqual(
             result, ["192.168.1.1:443", "192.168.1.1:80", "192.168.1.3:80"]
         )
-
-    # TBD add testcase for the URL parameter
 
 
 class TestHostScanData(unittest.TestCase):
@@ -650,7 +648,7 @@ class TestMarkdownConvert(unittest.TestCase):
         content = (
             "|IP|Hostname|Port|Status|Comment|\n"
             "|--|--|--|--|---|\n"
-            "| 192.168.1.1 | host1.local | 80/tcp(http) | Done | Web server |\n"
+            "| 192.168.1.1 | host1.local | 80/tcp(http) | Done \t | Web server |\n"
         )
         result = self.converter.parse(content)
 
