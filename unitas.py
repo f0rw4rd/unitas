@@ -498,13 +498,13 @@ class NmapParser(ScanParser):
         if not tls_found:
             for script in port.findall(".//script"):
                 # some services have TLS but nmap does not mark it via the tunnel e.g. FTP
-                if script.attrib.get("id", "") in ["ssl-cert"]:
+                if script.attrib.get("id", "") == "ssl-cert":
                     tls_found = True
+                    break
 
         if tls_found:
             if service == "http":
                 service = "https"
-
             comment += "Has TLS"
 
         return PortDetails(
