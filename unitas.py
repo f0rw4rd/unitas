@@ -10,6 +10,7 @@ import re
 import socket
 from ipaddress import ip_address
 import logging
+from collections import defaultdict
 from abc import ABC, abstractmethod
 from functools import lru_cache
 
@@ -136,6 +137,7 @@ class ThreadSafeServiceLookup:
 
 
 service_lookup = ThreadSafeServiceLookup()
+hostup_dict = defaultdict(dict)
 
 
 class HostScanData:
@@ -355,6 +357,9 @@ class NessusParser(ScanParser):
             self._parse_service_detection(block, host)
             self._parse_port_scanners(block, host)
 
+            if len(host.ports) == 0:
+                pass  # TBD: implement this thing, if find port scan
+
             self.data[ip] = host
         return self.data
 
@@ -423,6 +428,13 @@ class NmapParser(ScanParser):
                     h = HostScanData(ip=host_ip)
 
                     self._parse_ports(host, h)
+                    if len(h.ports) == 0:  # do not parse host that have no IP
+                        if not host_ip in hostup_dict:
+                            reason = status.attrib.get("reason", "")
+                            if reason and not reason == "user-set":
+                                hostup_dict[host_ip] = reason
+                        continue
+
                     self.data[host_ip] = h
 
                     hostnames = host.find(".//hostnames")
@@ -728,6 +740,14 @@ def main() -> None:
     else:
         md_converter = MarkdownConvert(final_state)
         md_content = md_converter.convert()
+
+        if hostup_dict:
+            logging.info(
+                f"Found {len(hostup_dict)} hosts that are up, but have no open ports"
+            )
+            for ip, reason in hostup_dict.items():
+                logging.info(f"{ip}:{reason}")
+            print("")
 
         logging.info("Updated state saved to state.md")
         save_markdown_state(final_state, "state.md")
