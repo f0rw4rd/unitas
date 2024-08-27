@@ -1,5 +1,4 @@
 import glob
-import sys
 import threading
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
@@ -32,8 +31,6 @@ class PortDetails:
         self.port = port
         self.protocol = protocol
         self.state = state
-        if "     " in service:
-            pass
         self.service = service
         self.comment = comment
 
@@ -213,6 +210,11 @@ class HostScanData:
             "ports": [port.to_dict() for port in self.ports],
         }
 
+    def to_markdown_rows(self) -> List[str]:
+        return [
+            f"|{self.ip}|{str(x)}|       |       |" for x in self.get_sorted_ports()
+        ]
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HostScanData":
         host = cls(data["ip"])
@@ -381,32 +383,24 @@ class NessusParser(ScanParser):
 
     def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> None:
         for item in block.findall(".//ReportItem[@pluginFamily='Service detection']"):
-            port: str = item.attrib.get("port", "")
-            protocol: str = item.attrib.get("protocol", "")
-            service: str = item.attrib.get("svc_name", "")
-            service = PortDetails.get_service_name(service)
-            comment: str = ""
-            if "TLS" in item.attrib.get("pluginName", "") or "SSL" in item.attrib.get(
-                "pluginName", ""
-            ):
-                comment = "Has TLS"
-            state: str = "TBD"
-            host.add_port(port, protocol, state, service, comment)
+            host.add_port_details(self._parse_service_item(item))
 
-    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
-        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
-            port: str = item.attrib.get("port", "")
-            if port == "0":  # host scan
-                continue
-            protocol: str = item.attrib.get("protocol", "")
-            service: str = item.attrib.get("svc_name", "")
-            if "?" not in service:  # append a ? for just port scans
-                service = PortDetails.get_service_name_for_port(port, protocol, service)
-                service += "?"
-            else:
-                service = PortDetails.get_service_name(service)
-            state: str = "TBD"
-            host.add_port(port, protocol, state, service)
+    def _parse_port_item(self, item: ET.Element) -> PortDetails:
+        if not all(attr in item.attrib for attr in ["port", "protocol", "svc_name"]):
+            logging.error(f"Failed to parse nessus port scan: {ET.tostring(item)}")
+            return None
+        port: str = item.attrib.get("port")
+        if port == "0":  # host scans return port zero, skip
+            return None
+        protocol: str = item.attrib.get("protocol")
+        service: str = item.attrib.get("svc_name")
+        if "?" not in service:  # append a ? for just port scans
+            service = service_lookup.get_service_name_for_port(port, protocol, service)
+            service += "?"
+        else:
+            service = PortDetails.get_service_name(service)
+        state: str = "TBD"
+        return PortDetails(port=port, service=service, state=state, protocol=protocol)
 
     def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
         for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
@@ -467,7 +461,9 @@ class NmapParser(ScanParser):
 
                 comment += "Has TLS"
         else:
-            service = PortDetails.get_service_name_for_port(portid, protocol, "unknown")
+            service = service_lookup.get_service_name_for_port(
+                portid, protocol, "unknown"
+            )
             service += "?"
 
         return PortDetails(
@@ -525,16 +521,9 @@ def save_markdown_state(state: Dict[str, HostScanData], filename: str):
 
 def load_markdown_state(filename: str) -> Dict[str, HostScanData]:
     try:
-        if os.path.exists(filename):
-            with open(filename, "r") as f:
-                content = f.read()
-        else:
-            logging.info(f"{filename} was not found. Reading from stdin")
-            # print to stdout, because logging might not print anything
-            print(f"{filename} was not found. Reading from stdin")
-            content = sys.stdin.read().strip()
-            logging.info("Content read from stdin")
-            # Strip empty lines
+        with open(filename, "r") as f:
+            content = f.read()
+        # Strip empty lines
         content = "\n".join(line for line in content.split("\n") if line.strip())
         converter = MarkdownConvert()
         return converter.parse(content)
@@ -599,33 +588,21 @@ def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
 
 
 def parse_files_concurrently(
-    parsers: List[ScanParser], max_workers: int = 4
+    parsers: List[ScanParser], max_workers: int = 1
 ) -> Dict[str, HostScanData]:
     global_state: Dict[str, HostScanData] = {}
-    state_lock = threading.Lock()  # Create a lock
-
-    def parse_and_merge(parser: ScanParser):
-        try:
-            file_path, scan_results = parse_file(parser)
-            with state_lock:  # Acquire the lock before modifying global_state
-                nonlocal global_state
-                global_state = merge_states(global_state, scan_results)
-            return file_path, True
-        except Exception as exc:
-            logging.error(f"{parser.file_path} generated an exception: {exc}")
-            return parser.file_path, False
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_parser = {
-            executor.submit(parse_and_merge, parser): parser for parser in parsers
+            executor.submit(parse_file, parser): parser for parser in parsers
         }
         for future in concurrent.futures.as_completed(future_to_parser):
-            file_path, success = future.result()
-            if success:
-                logging.info(f"Successfully parsed and merged results from {file_path}")
-            else:
-                logging.warning(f"Failed to parse or merge results from {file_path}")
+            parser = future_to_parser[future]
+            try:
+                file_path, scan_results = future.result()
+                global_state = merge_states(global_state, scan_results)
 
+            except Exception as exc:
+                logging.error(f"{parser.file_path} generated an exception: {exc}")
     return global_state
 
 
