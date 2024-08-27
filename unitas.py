@@ -1,4 +1,6 @@
 import glob
+import sys
+import threading
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 from typing import Dict, List, Optional, Tuple, Any, Type
@@ -30,6 +32,8 @@ class PortDetails:
         self.port = port
         self.protocol = protocol
         self.state = state
+        if "     " in service:
+            pass
         self.service = service
         self.comment = comment
 
@@ -102,24 +106,38 @@ class PortDetails:
             return PortDetails.SERVICE_MAPPING[service]
         return service
 
-    @staticmethod
-    @lru_cache(maxsize=1024)
-    def get_service_name_for_port(
-        port: str, protocol: str = "tcp", default_service: str = "unknown?"
-    ):
-        if PortDetails.is_valid_port(port):
-
-            try:
-                service = socket.getservbyport(int(port), protocol)
-            except socket.error:
-                service = default_service
-            return PortDetails.get_service_name(service)
-        else:
-            raise ValueError(f'Port "{port}" is not valid!')
-
     @classmethod
     def from_dict(cls, data: Dict[str, str]) -> "PortDetails":
         return cls(data["port"], data["protocol"], data["state"], data["service"])
+
+
+class ThreadSafeServiceLookup:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._cache: Dict[str, str] = {}
+
+    def get_service_name_for_port(
+        self, port: str, protocol: str = "tcp", default_service: str = "unknown?"
+    ):
+        if PortDetails.is_valid_port(port):
+            cache_id = port + protocol
+            if cache_id in self._cache:
+                return self._cache[cache_id]
+            with self._lock:
+                if cache_id in self._cache:
+                    return self._cache[cache_id]
+                try:
+                    service = socket.getservbyport(int(port), protocol)
+                except socket.error:
+                    service = default_service
+                service = PortDetails.get_service_name(service)
+                self._cache[cache_id] = service
+                return service
+        else:
+            raise ValueError(f'Port "{port}" is not valid!')
+
+
+service_lookup = ThreadSafeServiceLookup()
 
 
 class HostScanData:
@@ -187,11 +205,6 @@ class HostScanData:
             "hostname": self.hostname,
             "ports": [port.to_dict() for port in self.ports],
         }
-
-    def to_markdown_rows(self) -> List[str]:
-        return [
-            f"|{self.ip}|{str(x)}|       |       |" for x in self.get_sorted_ports()
-        ]
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HostScanData":
@@ -358,7 +371,9 @@ class NessusParser(ScanParser):
             protocol: str = item.attrib.get("protocol", "")
             service: str = item.attrib.get("svc_name", "")
             if "?" not in service:  # append a ? for just port scans
-                service = PortDetails.get_service_name_for_port(port, protocol, service)
+                service = service_lookup.get_service_name_for_port(
+                    port, protocol, service
+                )
                 service += "?"
             else:
                 service = PortDetails.get_service_name(service)
@@ -408,7 +423,7 @@ class NmapParser(ScanParser):
                 if service == "tcpwrapped":
                     service = "unknown?"
                 elif service_element.attrib.get("method") == "table":
-                    service = PortDetails.get_service_name_for_port(
+                    service = service_lookup.get_service_name_for_port(
                         portid, protocol, service
                     )
                     service += "?"
@@ -467,9 +482,16 @@ def save_markdown_state(state: Dict[str, HostScanData], filename: str):
 
 def load_markdown_state(filename: str) -> Dict[str, HostScanData]:
     try:
-        with open(filename, "r") as f:
-            content = f.read()
-        # Strip empty lines
+        if os.path.exists(filename):
+            with open(filename, "r") as f:
+                content = f.read()
+        else:
+            logging.info(f"{filename} was not found. Reading from stdin")
+            # print to stdout, because logging might not print anything
+            print(f"{filename} was not found. Reading from stdin")
+            content = sys.stdin.read().strip()
+            logging.info("Content read from stdin")
+            # Strip empty lines
         content = "\n".join(line for line in content.split("\n") if line.strip())
         converter = MarkdownConvert()
         return converter.parse(content)
@@ -534,21 +556,33 @@ def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
 
 
 def parse_files_concurrently(
-    parsers: List[ScanParser], max_workers: int = 1
+    parsers: List[ScanParser], max_workers: int = 4
 ) -> Dict[str, HostScanData]:
     global_state: Dict[str, HostScanData] = {}
+    state_lock = threading.Lock()  # Create a lock
+
+    def parse_and_merge(parser: ScanParser):
+        try:
+            file_path, scan_results = parse_file(parser)
+            with state_lock:  # Acquire the lock before modifying global_state
+                nonlocal global_state
+                global_state = merge_states(global_state, scan_results)
+            return file_path, True
+        except Exception as exc:
+            logging.error(f"{parser.file_path} generated an exception: {exc}")
+            return parser.file_path, False
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_parser = {
-            executor.submit(parse_file, parser): parser for parser in parsers
+            executor.submit(parse_and_merge, parser): parser for parser in parsers
         }
         for future in concurrent.futures.as_completed(future_to_parser):
-            parser = future_to_parser[future]
-            try:
-                file_path, scan_results = future.result()
-                global_state = merge_states(global_state, scan_results)
+            file_path, success = future.result()
+            if success:
+                logging.info(f"Successfully parsed and merged results from {file_path}")
+            else:
+                logging.warning(f"Failed to parse or merge results from {file_path}")
 
-            except Exception as exc:
-                logging.error(f"{parser.file_path} generated an exception: {exc}")
     return global_state
 
 
@@ -669,8 +703,8 @@ def main() -> None:
         print()
         print(md_content)
 
-        # save_markdown_state(final_state, "state.md")
-        # logging.info("Updated state saved to state.md")
+        save_markdown_state(final_state, "state.md")
+        logging.info("Updated state saved to state.md")
 
 
 if __name__ == "__main__":
