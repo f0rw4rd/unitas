@@ -92,7 +92,7 @@ class PortDetails:
     SERVICE_MAPPING: Dict[str, str] = {
         "www": "http",
         "microsoft-ds": "smb",
-        "netbios-ssn": "smb",
+        #"netbios-ssn": "smb",
         "cifs": "smb",
         "ms-wbt-server": "rdp",
     }
@@ -607,27 +607,32 @@ def main() -> None:
         help="Enable verbose output (sets log level to DEBUG)",
     )
     parser.add_argument(
+        "-V",
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
         help="Show the version number and exit",
     )
     parser.add_argument(
+        "-u",
         "--update",
         action="store_true",
         help="Update existing markdown from state.md or stdin",
     )
     parser.add_argument(
+        "-s",
         "--search",
         help="Search for specific port numbers or service names (comma-separated)",
     )
     parser.add_argument(
+        "-U",
         "--url",
         action="store_true",
         default=False,
         help="Adds the protocol of the port as URL prefix",
     )
     parser.add_argument(
+        "-S",
         "--service",
         action="store_true",
         default=False,
@@ -644,6 +649,11 @@ def main() -> None:
     setup_logging(args.verbose)
 
     logging.info(f"Unitas v{__version__} starting up.")
+
+    if not os.path.exists(args.scan_folder):  
+        folder = os.path.abspath(args.scan_folder)      
+        logging.error(f"Source folder {folder} was not found!")
+        return
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
         args.scan_folder
