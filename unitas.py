@@ -96,7 +96,8 @@ class PortDetails:
     SERVICE_MAPPING: Dict[str, str] = {
         "www": "http",
         "microsoft-ds": "smb",
-        "netbios-ssn": "smb",
+        # "netbios-ssn": "smb",
+        "cifs": "smb",
         "ms-wbt-server": "rdp",
     }
 
@@ -156,6 +157,17 @@ class HostScanData:
         except ValueError:
             return False
 
+    def add_port_details(self, new_port: PortDetails):
+        if new_port is None:  # skip if new_port is None
+            return
+
+        for p in self.ports:
+            if p.port == new_port.port and p.protocol == new_port.protocol:
+                p.update(new_port)
+                return
+        # if the port did not exist, just add it
+        self.ports.append(new_port)
+
     def add_port(
         self,
         port: str,
@@ -165,12 +177,7 @@ class HostScanData:
         comment: str = "",
     ) -> None:
         new_port = PortDetails(port, protocol, state, service, comment)
-        for p in self.ports:
-            if p.port == port and p.protocol == protocol:
-                p.update(new_port)
-                return
-        # if the port did not exist, just add it
-        self.ports.append(new_port)
+        self.add_port_details(new_port)
 
     def set_hostname(self, hostname: str) -> None:
         self.hostname = hostname
@@ -349,6 +356,29 @@ class NessusParser(ScanParser):
             self.data[ip] = host
         return self.data
 
+    def _parse_service_item(self, item: ET.Element) -> PortDetails:
+        if not all(
+            attr in item.attrib
+            for attr in ["port", "protocol", "svc_name", "pluginName"]
+        ):
+            logging.error(f"Failed to parse nessus service scan: {ET.tostring(item)}")
+            return None
+        port: str = item.attrib.get("port")
+        protocol: str = item.attrib.get("protocol")
+        service: str = item.attrib.get("svc_name")
+        service = PortDetails.get_service_name(service)
+        comment: str = ""
+        if "TLS" in item.attrib.get("pluginName") or "SSL" in item.attrib.get(
+            "pluginName", ""
+        ):
+            if service == "http":
+                service = "https"
+            comment = "Has TLS"
+        state: str = "TBD"
+        return PortDetails(
+            port=port, service=service, comment=comment, state=state, protocol=protocol
+        )
+
     def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> None:
         for item in block.findall(".//ReportItem[@pluginFamily='Service detection']"):
             port: str = item.attrib.get("port", "")
@@ -371,14 +401,16 @@ class NessusParser(ScanParser):
             protocol: str = item.attrib.get("protocol", "")
             service: str = item.attrib.get("svc_name", "")
             if "?" not in service:  # append a ? for just port scans
-                service = service_lookup.get_service_name_for_port(
-                    port, protocol, service
-                )
+                service = PortDetails.get_service_name_for_port(port, protocol, service)
                 service += "?"
             else:
                 service = PortDetails.get_service_name(service)
             state: str = "TBD"
             host.add_port(port, protocol, state, service)
+
+    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
+        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
+            host.add_port_details(self._parse_port_item(item))
 
 
 class NmapParser(ScanParser):
@@ -406,41 +438,52 @@ class NmapParser(ScanParser):
                                 h.set_hostname(x.attrib.get("name"))
         return self.data
 
-    def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
-        for port in host.findall(".//port"):
-            protocol: str = port.attrib.get("protocol", "")
-            portid: str = port.attrib.get("portid", "")
-            state_elem = port.find(".//state")
-            state: str = (
-                state_elem.attrib.get("state", "") if state_elem is not None else ""
-            )
-            service_element = port.find(".//service")
-            comment: str = ""
+    def _parse_port_item(self, port: ET.Element) -> PortDetails:
+        if not all(attr in port.attrib for attr in ["portid", "protocol"]):
+            logging.error(f"Failed to parse nmap scan: {ET.tostring(port)}")
+            return None
+        protocol: str = port.attrib.get("protocol")
+        portid: str = port.attrib.get("portid")
+        service_element = port.find(".//service")
+        comment: str = ""
 
-            if service_element is not None:
-                service: str = service_element.attrib.get("name", "")
-                # need or service will not be overwritten by other services
-                if service == "tcpwrapped":
-                    service = "unknown?"
-                elif service_element.attrib.get("method") == "table":
-                    service = service_lookup.get_service_name_for_port(
-                        portid, protocol, service
-                    )
-                    service += "?"
-                else:
-                    service = PortDetails.get_service_name(service)
-
-                if service_element.attrib.get("tunnel", "none") == "ssl":
-                    # nmap is not is not consistent with http/tls and https
-                    if service == "http":
-                        service = "https"
-
-                    comment += "Has TLS"
-            else:
+        if service_element is not None:
+            service: str = service_element.attrib.get("name")
+            # need or service will not be overwritten by other services
+            if service == "tcpwrapped":
                 service = "unknown?"
+            elif service_element.attrib.get("method") == "table":
+                service = service_lookup.get_service_name_for_port(
+                    portid, protocol, service
+                )
+                service += "?"
+            else:
+                service = PortDetails.get_service_name(service)
 
-            if state == "open":
-                h.add_port(portid, protocol, "TBD", service, comment)
+            if service_element.attrib.get("tunnel", "none") == "ssl":
+                # nmap is not is not consistent with http/tls and https
+                if service == "http":
+                    service = "https"
+
+                comment += "Has TLS"
+        else:
+            service = PortDetails.get_service_name_for_port(portid, protocol, "unknown")
+            service += "?"
+
+        return PortDetails(
+            port=portid,
+            protocol=protocol,
+            state="TBD",
+            comment=comment,
+            service=service,
+        )
+
+    def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
+        for port in host.findall(".//port[state]"):
+            # for some reason, doing a single xpath query fails with invalid attribute#
+            # only allow open ports
+            if port.find("state[@state='open']") is not None:
+                h.add_port_details(self._parse_port_item(port))
 
 
 class CustomFormatter(logging.Formatter):
@@ -615,27 +658,32 @@ def main() -> None:
         help="Enable verbose output (sets log level to DEBUG)",
     )
     parser.add_argument(
+        "-V",
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
         help="Show the version number and exit",
     )
     parser.add_argument(
+        "-u",
         "--update",
         action="store_true",
         help="Update existing markdown from state.md or stdin",
     )
     parser.add_argument(
+        "-s",
         "--search",
         help="Search for specific port numbers or service names (comma-separated)",
     )
     parser.add_argument(
+        "-U",
         "--url",
         action="store_true",
         default=False,
         help="Adds the protocol of the port as URL prefix",
     )
     parser.add_argument(
+        "-S",
         "--service",
         action="store_true",
         default=False,
@@ -652,6 +700,11 @@ def main() -> None:
     setup_logging(args.verbose)
 
     logging.info(f"Unitas v{__version__} starting up.")
+
+    if not os.path.exists(args.scan_folder):
+        folder = os.path.abspath(args.scan_folder)
+        logging.error(f"Source folder {folder} was not found!")
+        return
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
         args.scan_folder
@@ -699,12 +752,12 @@ def main() -> None:
         md_converter = MarkdownConvert(final_state)
         md_content = md_converter.convert()
 
+        logging.info("Updated state saved to state.md")
+        save_markdown_state(final_state, "state.md")
+
         logging.info("Scan Results (Markdown):")
         print()
         print(md_content)
-
-        save_markdown_state(final_state, "state.md")
-        logging.info("Updated state saved to state.md")
 
 
 if __name__ == "__main__":
