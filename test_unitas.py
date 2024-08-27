@@ -1,11 +1,109 @@
 import unittest
+from unittest.mock import create_autospec, patch
+import os
+from xml.etree.ElementTree import Element
+import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import ParseError
 from unitas import (
     PortDetails,
     HostScanData,
     merge_states,
+    NmapParser,
+    NessusParser,
     search_port_or_service,
     MarkdownConvert,
 )
+
+class TestNmapParser(unittest.TestCase):
+    def setUp(self):        
+        self.test_files_dir = os.path.join(os.path.dirname(__file__), 'tests', 'nmap_files')        
+
+    def _get_path(self, file):
+        return os.path.join(self.test_files_dir, file)
+
+    def test_parse_file(self):
+        self.assertIsNotNone(NmapParser(self._get_path("nmap-sample-1.xml")).parse())    
+        self.assertIsNotNone(NmapParser(self._get_path("nmap-sample-2.xml")).parse())            
+
+    def test_parse_results(self):
+        self.assertEqual(len(NmapParser(self._get_path("nmap-sample-1.xml")).parse()), 1)    
+        self.assertEqual(len(NmapParser(self._get_path("nmap-sample-2.xml")).parse()), 1)    
+
+    def test_parse_with_errors(self):        
+        with self.assertRaises(ParseError):
+            NmapParser(self._get_path("nmap-error-1.xml"))
+        with self.assertRaises(FileNotFoundError):
+            NmapParser(self._get_path("nmap-error-does_not_exist.xml"))    
+
+class TestNessusParser(unittest.TestCase):
+    def setUp(self):        
+        self.test_files_dir = os.path.join(os.path.dirname(__file__), 'tests', 'nessus_files')        
+
+    def _get_path(self, file):
+        return os.path.join(self.test_files_dir, file)
+
+    def _get_element(self, xml):
+        return ET.fromstring(xml)
+
+    def test_parse_file(self):
+        self.assertIsNotNone(NessusParser(self._get_path("nessus-sample-1.nessus")).parse())    
+        self.assertIsNotNone(NessusParser(self._get_path("nessus-sample-2.nessus")).parse())    
+
+    def test_parse_results(self):
+        # test the amount of hosts found
+        self.assertEqual(len(NessusParser(self._get_path("nessus-sample-1.nessus")).parse()), 1)    
+        self.assertEqual(len(NessusParser(self._get_path("nessus-sample-2.nessus")).parse()), 7)            
+        
+    def test_parse_with_errors(self):        
+        with self.assertRaises(ParseError):
+            NmapParser(self._get_path("nessus-error-1.nessus"))
+        with self.assertRaises(FileNotFoundError):
+            NmapParser(self._get_path("nessus-error-does_not_exist.nessus"))    
+
+    def test_service_parser(self):
+        parser = NessusParser(self._get_path("nessus-sample-1.nessus")) # dumy file not parsed        
+        # test if a tls port with www is translated to https
+        thing =  parser._parse_service_item(self._get_element(b'<ReportItem port="443" svc_name="www" protocol="tcp" severity="0" pluginID="121010" pluginName="TLS Version 1.1 Protocol Detection" pluginFamily="Service detection">\n<asset_inventory>True</asset_inventory>\n<cwe>327</cwe>\n<description>The remote service accepts connections encrypted using TLS 1.1.\nTLS 1.1 lacks support for current and recommended cipher suites.\nCiphers that support encryption before MAC computation, and authenticated encryption modes such as GCM cannot be used with TLS 1.1\n\nAs of March 31, 2020, Endpoints that are not enabled for TLS 1.2 and higher will no longer function properly with major web browsers and major vendors.</description>\n<fname>tls11_detection.nasl</fname>\n<plugin_modification_date>2023/04/19</plugin_modification_date>\n<plugin_name>TLS Version 1.1 Protocol Detection</plugin_name>\n<plugin_publication_date>2019/01/08</plugin_publication_date>\n<plugin_type>remote</plugin_type>\n<risk_factor>None</risk_factor>\n<script_version>1.10</script_version>\n<see_also>https://tools.ietf.org/html/draft-ietf-tls-oldversions-deprecate-00\nhttp://www.nessus.org/u?c8ae820d</see_also>\n<solution>Enable support for TLS 1.2 and/or 1.3, and disable support for TLS 1.1.</solution>\n<synopsis>The remote service encrypts traffic using an older version of TLS.</synopsis>\n<xref>CWE:327</xref>\n<plugin_output>TLSv1.1 is enabled and the server supports at least one cipher.</plugin_output>\n</ReportItem>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '443',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'https',
+            'comment': 'Has TLS'
+        })
+
+         # test a xml with missing attributes
+        thing = parser._parse_service_item(self._get_element(b'<test>test</test>\n'))
+        self.assertIsNone(thing)
+
+    def test_port_parser(self):    
+        parser = NessusParser(self._get_path("nessus-sample-1.nessus")) # dumy file not parsed               
+        # test basic parsing of a port scan
+        thing = parser._parse_port_item(self._get_element(b'<ReportItem port="18181" svc_name="opsec-cvp?" protocol="tcp" severity="0" pluginID="11219" pluginName="Nessus SYN scanner" pluginFamily="Port scanners">\n<description>This plugin is a SYN \'half-open\' port scanner.  It shall be reasonably quick even against a firewalled target. \n\nNote that SYN scans are less intrusive than TCP (full connect) scans against broken services, but they might cause problems for less robust firewalls and also leave unclosed connections on the remote target, if the network is loaded.</description>\n<fname>nessus_syn_scanner.nbin</fname>\n<plugin_modification_date>2024/05/20</plugin_modification_date>\n<plugin_name>Nessus SYN scanner</plugin_name>\n<plugin_publication_date>2009/02/04</plugin_publication_date>\n<plugin_type>remote</plugin_type>\n<risk_factor>None</risk_factor>\n<script_version>1.60</script_version>\n<solution>Protect your target with an IP filter.</solution>\n<synopsis>It is possible to determine which TCP ports are open.</synopsis>\n<plugin_output>Port 18181/tcp was found to be open</plugin_output>\n</ReportItem>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '18181',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'opsec-cvp?',
+            'comment': ''
+        })
+        # test for a normal syn scan
+        thing = parser._parse_port_item(self._get_element(b'<ReportItem port="3389" svc_name="msrdp" protocol="tcp" severity="0" pluginID="11219" pluginName="Nessus SYN scanner" pluginFamily="Port scanners">\n<description>This plugin is a SYN \'half-open\' port scanner.\nIt shall be reasonably quick even against a firewalled target.\n\nNote that SYN scanners are less intrusive than TCP (full connect) scanners against broken services, but they might kill lame misconfigured firewalls. They might also leave unclosed connections on the remote target, if the network is loaded.</description>\n<fname>nessus_syn_scanner.nbin</fname>\n<plugin_modification_date>2011/04/05</plugin_modification_date>\n<plugin_name>Nessus SYN scanner</plugin_name>\n<plugin_type>remote</plugin_type>\n<risk_factor>None</risk_factor>\n<script_version>$Revision: 1.14 $</script_version>\n<solution>Protect your target with an IP filter.</solution>\n<synopsis>It is possible to determine which TCP ports are open.</synopsis>\n<plugin_output>Port 3389/tcp was found to be open</plugin_output>\n</ReportItem>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '3389',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'rdp?',
+            'comment': ''
+        })
+        # test a host scan
+        thing = parser._parse_port_item(self._get_element(b'<ReportItem port="0" svc_name="general" protocol="tcp" severity="0" pluginID="10180" pluginName="Ping the remote host" pluginFamily="Port scanners">\n<description>Nessus was able to determine if the remote host is alive using one or more of the following ping types :\n\n  - An ARP ping, provided the host is on the local subnet     and Nessus is running over Ethernet.\n\n  - An ICMP ping.\n\n  - A TCP ping, in which the plugin sends to the remote host     a packet with the flag SYN, and the host will reply with     a RST or a SYN/ACK.\n\n  - A UDP ping (e.g., DNS, RPC, and NTP).</description>\n<fname>ping_host.nasl</fname>\n<plugin_modification_date>2024/03/25</plugin_modification_date>\n<plugin_name>Ping the remote host</plugin_name>\n<plugin_publication_date>1999/06/24</plugin_publication_date>\n<plugin_type>remote</plugin_type>\n<risk_factor>None</risk_factor>\n<script_version>2.38</script_version>\n<solution>n/a</solution>\n<synopsis>It was possible to identify the status of the remote host (alive or dead).</synopsis>\n<plugin_output>The remote host is up\nThe host replied to an ARP who-is query.\nHardware address : 78:5d:c8:98:28:c2</plugin_output>\n</ReportItem>\n'))
+        self.assertIsNone(thing)
+
+        # test a xml with missing attributes
+        thing = parser._parse_port_item(self._get_element(b'<test>test</test>\n'))
+        self.assertIsNone(thing)
+
 
 
 class TestPortDetails(unittest.TestCase):

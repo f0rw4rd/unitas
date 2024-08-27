@@ -138,6 +138,17 @@ class HostScanData:
         except ValueError:
             return False
 
+    def add_port_details(self, new_port: PortDetails):
+        if new_port is None: # skip if new_port is None
+            return 
+
+        for p in self.ports:
+            if p.port == new_port.port and p.protocol == new_port.protocol:
+                p.update(new_port)
+                return
+        # if the port did not exist, just add it
+        self.ports.append(new_port)
+
     def add_port(
         self,
         port: str,
@@ -147,12 +158,7 @@ class HostScanData:
         comment: str = "",
     ) -> None:
         new_port = PortDetails(port, protocol, state, service, comment)
-        for p in self.ports:
-            if p.port == port and p.protocol == protocol:
-                p.update(new_port)
-                return
-        # if the port did not exist, just add it
-        self.ports.append(new_port)
+        self.add_port_details(new_port)        
 
     def set_hostname(self, hostname: str) -> None:
         self.hostname = hostname
@@ -336,35 +342,48 @@ class NessusParser(ScanParser):
             self.data[ip] = host
         return self.data
 
+    def _parse_service_item(self, item: ET.Element) -> PortDetails:
+        if not all(attr in item.attrib for attr in ["port", "protocol", "svc_name", "pluginName"]):
+            logging.error(f"Failed to parse nessus service scan: {ET.tostring(item)}")
+            return None
+        port: str = item.attrib.get("port")
+        protocol: str = item.attrib.get("protocol")
+        service: str = item.attrib.get("svc_name")
+        service = PortDetails.get_service_name(service)
+        comment: str = ""
+        if "TLS" in item.attrib.get("pluginName") or "SSL" in item.attrib.get(
+            "pluginName", ""
+        ):
+            if service  == "http":
+                service = "https"
+            comment = "Has TLS"
+        state: str = "TBD"
+        return PortDetails(port=port, service=service, comment=comment, state=state, protocol=protocol)
+
     def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> None:
         for item in block.findall(".//ReportItem[@pluginFamily='Service detection']"):
-            port: str = item.attrib.get("port", "")
-            protocol: str = item.attrib.get("protocol", "")
-            service: str = item.attrib.get("svc_name", "")
+            host.add_port_details(self._parse_service_item(item))
+
+    def _parse_port_item(self, item: ET.Element) -> PortDetails:                
+        if not all(attr in item.attrib for attr in ["port", "protocol", "svc_name"]):
+            logging.error(f"Failed to parse nessus port scan: {ET.tostring(item)}")
+            return None
+        port: str = item.attrib.get("port")
+        if port == "0":  # host scans return port zero, skip            
+            return None
+        protocol: str = item.attrib.get("protocol")
+        service: str = item.attrib.get("svc_name")
+        if "?" not in service:  # append a ? for just port scans
+            service = PortDetails.get_service_name_for_port(port, protocol, service)
+            service += "?"
+        else:
             service = PortDetails.get_service_name(service)
-            comment: str = ""
-            if "TLS" in item.attrib.get("pluginName", "") or "SSL" in item.attrib.get(
-                "pluginName", ""
-            ):
-                comment = "Has TLS"
-            state: str = "TBD"
-            host.add_port(port, protocol, state, service, comment)
+        state: str = "TBD"
+        return PortDetails(port=port, service=service, state=state, protocol=protocol)
 
     def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
         for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
-            port: str = item.attrib.get("port", "")
-            if port == "0":  # host scan
-                continue
-            protocol: str = item.attrib.get("protocol", "")
-            service: str = item.attrib.get("svc_name", "")
-            if "?" not in service:  # append a ? for just port scans
-                service = PortDetails.get_service_name_for_port(port, protocol, service)
-                service += "?"
-            else:
-                service = PortDetails.get_service_name(service)
-            state: str = "TBD"
-            host.add_port(port, protocol, state, service)
-
+            host.add_port_details(self._parse_port_item(item))
 
 class NmapParser(ScanParser):
 
