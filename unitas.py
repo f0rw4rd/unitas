@@ -458,6 +458,9 @@ class NmapParser(ScanParser):
                         for x in hostnames:
                             if "name" in x.attrib:
                                 h.set_hostname(x.attrib.get("name"))
+                                # prefer the user given hostname instead of the PTR
+                                if x.attrib.get("type", "") == "user":
+                                    break
         return self.data
 
     def _parse_port_item(self, port: ET.Element) -> PortDetails:
@@ -468,6 +471,7 @@ class NmapParser(ScanParser):
         portid: str = port.attrib.get("portid")
         service_element = port.find(".//service")
         comment: str = ""
+        tls_found: bool = False
 
         if service_element is not None:
             service: str = service_element.attrib.get("name")
@@ -484,15 +488,24 @@ class NmapParser(ScanParser):
 
             if service_element.attrib.get("tunnel", "none") == "ssl":
                 # nmap is not is not consistent with http/tls and https
-                if service == "http":
-                    service = "https"
-
-                comment += "Has TLS"
+                tls_found = True
         else:
             service = service_lookup.get_service_name_for_port(
                 portid, protocol, "unknown"
             )
             service += "?"
+
+        if not tls_found:
+            for script in port.findall(".//script"):
+                # some services have TLS but nmap does not mark it via the tunnel e.g. FTP
+                if script.attrib.get("id", "") in ["ssl-cert"]:
+                    tls_found = True
+
+        if tls_found:
+            if service == "http":
+                service = "https"
+
+            comment += "Has TLS"
 
         return PortDetails(
             port=portid,

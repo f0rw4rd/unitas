@@ -143,6 +143,23 @@ class TestNmapParser(unittest.TestCase):
                 "comment": "",
             },
         )
+        # test TLS detection on script output
+        thing = parser._parse_port_item(
+            self._get_element(
+                b'<port protocol="tcp" portid="21"><state state="open" reason="syn-ack" reason_ttl="55"/><service name="ftp" product="ProFTPD or KnFTPD" ostype="Unix" method="probed" conf="10"/><script id="ssl-cert" output="x"><table key="subject"><elem key="commonName">webserver.x.x</elem><elem key="countryName">x</elem><elem key="localityName">x</elem><elem key="organizationName">ispgateway</elem><elem key="stateOrProvinceName">x</elem></table><table key="issuer"><elem key="commonName">x.x.de</elem><elem key="countryName">x</elem><elem key="localityName">x</elem><elem key="organizationName">x</elem><elem key="stateOrProvinceName">Bayern</elem></table><table key="pubkey"><elem key="type">rsa</elem><elem key="bits">2048</elem><elem key="modulus">x</elem><elem key="exponent">65537</elem></table><table key="extensions"><table><elem key="name">X509v3 Subject Key Identifier</elem><elem key="value">x</elem></table><table><elem key="name">X509v3 Authority Key Identifier</elem><elem key="value">xC</elem></table><table><elem key="name">X509v3 Basic Constraints</elem><elem key="value">CA:TRUE</elem></table></table><elem key="sig_algo">sha256WithRSAEncryption</elem><table key="validity"><elem key="notBefore">x</elem><elem key="notAfter">x</elem></table><elem key="md5">x</elem><elem key="sha1">x</elem><elem key="pem">x</elem></script></port>'
+            )
+        )
+        self.assertDictEqual(
+            thing.__dict__,
+            {
+                "port": "21",
+                "protocol": "tcp",
+                "state": "TBD",
+                "service": "ftp",
+                "comment": "Has TLS",
+            },
+        )
+
         # test a xml with missing attributes
         thing = parser._parse_port_item(self._get_element(b"<test>test</test>\n"))
         self.assertIsNone(thing)
