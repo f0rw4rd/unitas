@@ -21,6 +21,9 @@ class TestNmapParser(unittest.TestCase):
     def _get_path(self, file):
         return os.path.join(self.test_files_dir, file)
 
+    def _get_element(self, xml):
+        return ET.fromstring(xml)
+
     def test_parse_file(self):
         self.assertIsNotNone(NmapParser(self._get_path("nmap-sample-1.xml")).parse())    
         self.assertIsNotNone(NmapParser(self._get_path("nmap-sample-2.xml")).parse())            
@@ -29,11 +32,73 @@ class TestNmapParser(unittest.TestCase):
         self.assertEqual(len(NmapParser(self._get_path("nmap-sample-1.xml")).parse()), 1)    
         self.assertEqual(len(NmapParser(self._get_path("nmap-sample-2.xml")).parse()), 1)    
 
+
+    def test_port_and_service_parser(self):
+        parser = NmapParser(self._get_path("nmap-sample-1.xml"))
+        # test a generic syn scan
+        thing = parser._parse_port_item(self._get_element(b'<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="64" /><service name="http" method="table" conf="3" /></port>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '80',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'http?',
+            'comment': ''
+        })
+        # test a generic syn scan
+        thing = parser._parse_port_item(self._get_element(b'<port protocol="tcp" portid="8291"><state state="open" reason="syn-ack" reason_ttl="64" /></port>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '8291',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'unknown?',
+            'comment': ''
+        })
+        # test a service scan
+        thing = parser._parse_port_item(self._get_element(b'<port protocol="tcp" portid="143"><state state="open" reason="syn-ack" reason_ttl="125" /><service name="imap" product="hMailServer imapd" ostype="Windows" method="probed" conf="10"><cpe>cpe:/o:microsoft:windows</cpe></service><script id="imap-capabilities" output="IDLE NAMESPACE IMAP4 CAPABILITY SORT completed ACL CHILDREN QUOTA IMAP4rev1 OK RIGHTS=texkA0001" /><script id="banner" output="* OK IMAPrev1" /></port>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '143',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'imap',
+            'comment': ''
+        })
+        # test service scan with https
+        thing = parser._parse_port_item(self._get_element(b'<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="64" /><service name="http" product="lighttpd" tunnel="ssl" method="probed" conf="10"><cpe>cpe:/a:lighttpd:lighttpd</cpe></service></port>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '443',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'https',
+            'comment': 'Has TLS'
+        })
+        # test service with TLS
+        thing = parser._parse_port_item(self._get_element(b'<port protocol="tcp" portid="8729"><state state="open" reason="syn-ack" reason_ttl="64" /><service name="routeros-api" product="MikroTik RouterOS API" ostype="RouterOS" tunnel="ssl" method="probed" conf="10"><cpe>cpe:/o:mikrotik:routeros</cpe></service></port>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '8729',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'routeros-api',
+            'comment': 'Has TLS'
+        })
+        # test if tcpwrapped is displayed as unknown
+        thing = parser._parse_port_item(self._get_element(b'<port protocol="tcp" portid="40022"><state state="open" reason="syn-ack" reason_ttl="64" /><service name="tcpwrapped" method="probed" conf="8" /></port>\n'))
+        self.assertDictEqual(thing.__dict__, {
+            'port': '40022',
+            'protocol': 'tcp',
+            'state': 'TBD',
+            'service': 'unknown?',
+            'comment': ''
+        })
+        # test a xml with missing attributes
+        thing = parser._parse_port_item(self._get_element(b'<test>test</test>\n'))
+        self.assertIsNone(thing)
+
     def test_parse_with_errors(self):        
         with self.assertRaises(ParseError):
             NmapParser(self._get_path("nmap-error-1.xml"))
         with self.assertRaises(FileNotFoundError):
             NmapParser(self._get_path("nmap-error-does_not_exist.xml"))    
+
 
 class TestNessusParser(unittest.TestCase):
     def setUp(self):        

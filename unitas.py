@@ -93,6 +93,7 @@ class PortDetails:
         "www": "http",
         "microsoft-ds": "smb",
         "netbios-ssn": "smb",
+        "cifs": "smb",
         "ms-wbt-server": "rdp",
     }
 
@@ -410,42 +411,48 @@ class NmapParser(ScanParser):
                                 h.set_hostname(x.attrib.get("name"))
         return self.data
 
-    def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
-        for port in host.findall(".//port"):
-            protocol: str = port.attrib.get("protocol", "")
-            portid: str = port.attrib.get("portid", "")
-            state_elem = port.find(".//state")
-            state: str = (
-                state_elem.attrib.get("state", "") if state_elem is not None else ""
-            )
-            service_element = port.find(".//service")
-            comment: str = ""
+    def _parse_port_item(self, port: ET.Element) -> PortDetails:
+        if not all(attr in port.attrib for attr in ["portid", "protocol"]):
+            logging.error(f"Failed to parse nmap scan: {ET.tostring(port)}")
+            return None
+        protocol: str = port.attrib.get("protocol")
+        portid: str = port.attrib.get("portid")        
+        service_element = port.find(".//service")
+        comment: str = ""
 
-            if service_element is not None:
-                service: str = service_element.attrib.get("name", "")
-                # need or service will not be overwritten by other services
-                if service == "tcpwrapped":
-                    service = "unknown?"
-                elif service_element.attrib.get("method") == "table":
-                    service = PortDetails.get_service_name_for_port(
-                        portid, protocol, service
-                    )
-                    service += "?"
-                else:
-                    service = PortDetails.get_service_name(service)
-
-                if service_element.attrib.get("tunnel", "none") == "ssl":
-                    # nmap is not is not consistent with http/tls and https
-                    if service == "http":
-                        service = "https"
-
-                    comment += "Has TLS"
-            else:
+        if service_element is not None:
+            service: str = service_element.attrib.get("name")
+            # need or service will not be overwritten by other services
+            if service == "tcpwrapped":
                 service = "unknown?"
+            elif service_element.attrib.get("method") == "table":
+                service = PortDetails.get_service_name_for_port(
+                    portid, protocol, service
+                )
+                service += "?"
+            else:
+                service = PortDetails.get_service_name(service)
 
-            if state == "open":
-                h.add_port(portid, protocol, "TBD", service, comment)
+            if service_element.attrib.get("tunnel", "none") == "ssl":
+                # nmap is not is not consistent with http/tls and https
+                if service == "http":
+                    service = "https"
 
+                comment += "Has TLS"
+        else:
+            service = PortDetails.get_service_name_for_port(portid, protocol, "unknown")
+            service += "?"
+
+
+        return PortDetails(port=portid, protocol=protocol, state="TBD", comment=comment, service=service)
+
+    def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
+        for port in host.findall(".//port[state]"): 
+            # for some reason, doing a single xpath query fails with invalid attribute#
+            # only allow open ports
+            if port.find("state[@state='open']") is not None:
+                h.add_port_details(self._parse_port_item(port))
+      
 
 class CustomFormatter(logging.Formatter):
     """
@@ -684,13 +691,12 @@ def main() -> None:
         md_converter = MarkdownConvert(final_state)
         md_content = md_converter.convert()
 
+        logging.info("Updated state saved to state.md")
+        save_markdown_state(final_state, "state.md")
+
         logging.info("Scan Results (Markdown):")
         print()
         print(md_content)
-
-        # save_markdown_state(final_state, "state.md")
-        # logging.info("Updated state saved to state.md")
-
 
 if __name__ == "__main__":
     main()
