@@ -574,7 +574,7 @@ class TestMarkdownConvert(unittest.TestCase):
         self.global_state["192.168.1.1"].set_hostname("host1.local")
         self.global_state["192.168.1.1"].add_port("80", "tcp", "Done", "http")
         self.global_state["192.168.1.1"].add_port("443", "tcp", "TBD", "https?")
-        self.global_state["192.168.1.2"].add_port("22", "tcp", "Done", "ssh")
+        self.global_state["192.168.1.2"].add_port("22", "udp", "Done", "ssh")
 
         self.converter = MarkdownConvert(self.global_state)
 
@@ -589,7 +589,7 @@ class TestMarkdownConvert(unittest.TestCase):
             "|--|--|--|--|---|\n"
             "|192.168.1.1|host1.local|80/tcp(http)|Done||\n"
             "|192.168.1.1|host1.local|443/tcp(https?)|TBD||\n"
-            "|192.168.1.2||22/tcp(ssh)|Done||\n"
+            "|192.168.1.2||22/udp(ssh)|Done||\n"
         )
         self.assertEqual(self.converter.convert(), expected_output)
 

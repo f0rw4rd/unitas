@@ -94,7 +94,6 @@ class PortDetails:
     SERVICE_MAPPING: Dict[str, str] = {
         "www": "http",
         "microsoft-ds": "smb",
-        # "netbios-ssn": "smb",
         "cifs": "smb",
         "ms-wbt-server": "rdp",
     }
@@ -247,13 +246,30 @@ class Convert(ABC):
 
 
 class MarkdownConvert(Convert):
-    def convert(self) -> str:
+    def convert(self, formatted: bool = False) -> str:
         output = ["|IP|Hostname|Port|Status|Comment|"]
         output.append("|--|--|--|--|---|")
+
+        max_ip_len = max_hostname_len = max_port_len = max_status_len = (
+            max_comment_len
+        ) = 0
+
+        if formatted:
+            # Find the maximum length of each column
+            for host in self.global_state.values():
+                max_ip_len = max(max_ip_len, len(host.ip))
+                max_hostname_len = max(max_hostname_len, len(host.hostname))
+                for port in host.get_sorted_ports():
+                    port_info = f"{port.port}/{port.protocol}({port.service})"
+                    max_port_len = max(max_port_len, len(port_info))
+                    max_status_len = max(max_status_len, len(port.state))
+                    max_comment_len = max(max_comment_len, len(port.comment))
+
         for host in self.global_state.values():
             for port in host.get_sorted_ports():
+                service = f"{port.port}/{port.protocol}({port.service})"
                 output.append(
-                    f"|{host.ip}|{host.hostname}|{port.port}/{port.protocol}({port.service})|{port.state}|{port.comment}|"
+                    f"|{host.ip.ljust(max_ip_len)}|{host.hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{port.state.ljust(max_status_len)}|{port.comment.ljust(max_comment_len)}|"
                 )
         return "\n".join(output) + "\n"
 
@@ -524,13 +540,6 @@ def setup_logging(verbose: bool) -> None:
     logger.addHandler(handler)
 
 
-def save_markdown_state(state: Dict[str, HostScanData], filename: str):
-    converter = MarkdownConvert(state)
-    content = converter.convert()
-    with open(filename, "w") as f:
-        f.write(content)
-
-
 def load_markdown_state(filename: str) -> Dict[str, HostScanData]:
     try:
         with open(filename, "r") as f:
@@ -740,7 +749,7 @@ def main() -> None:
             logging.info(f"No systems found with port/service '{args.search}'")
     else:
         md_converter = MarkdownConvert(final_state)
-        md_content = md_converter.convert()
+        md_content = md_converter.convert(True)
 
         if hostup_dict:
             logging.info(
@@ -751,7 +760,8 @@ def main() -> None:
             print("")
 
         logging.info("Updated state saved to state.md")
-        save_markdown_state(final_state, "state.md")
+        with open("state.md", "w") as f:
+            f.write(md_content)
 
         logging.info("Scan Results (Markdown):")
         print()
