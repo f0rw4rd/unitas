@@ -358,7 +358,7 @@ class NessusParser(ScanParser):
             self._parse_port_scanners(block, host)
 
             if len(host.ports) == 0:
-                pass  # TBD: implement this thing, if find port scan
+                pass  # TBD: implement this thing, to find nessus host that are up but have no ports
 
             self.data[ip] = host
         return self.data
@@ -571,7 +571,7 @@ def merge_states(
 
 
 def search_port_or_service(
-    global_state: Dict[str, HostScanData], search_terms: List[str], url: bool
+    global_state: Dict[str, HostScanData], search_terms: List[str], with_url: bool
 ) -> List[str]:
     matching_ips = set()
     for ip, host_data in global_state.items():
@@ -582,12 +582,21 @@ def search_port_or_service(
                     or term.lower().strip() + "?" == port.service.lower()
                 ):
                     port_nr = port.port
-                    if not url:
-                        matching_ips.add(f"{ip}:{port_nr}")
-                    else:
-                        service = port.service.replace("?", "")
-                        matching_ips.add(f"{service}://{ip}:{port_nr}")
-                    break
+                    # check if this the default port for the protocol
+                    service = port.service.replace("?", "")
+                    default_svc = service_lookup.get_service_name_for_port(
+                        port.port, port.protocol, "???"
+                    )
+                    url: str = ip
+                    if with_url:
+                        url = service + "://" + url
+                    if default_svc == service:
+                        port_nr = ""
+                    if port_nr:
+                        url += ":" + port_nr
+
+                    matching_ips.add(url)
+
     return sorted(list(matching_ips))
 
 
