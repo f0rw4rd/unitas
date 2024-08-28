@@ -17,6 +17,7 @@ import time
 import requests
 import urllib3 
 import configparser
+import shutil
 
 
 __version__ = "1.0.0"
@@ -841,8 +842,10 @@ class NmapMerger(ScanMerger):
             f.write(data)
         
         logging.info(f"Saving merged scan to {output_file}")
-
-        os.system(f"xsltproc {output_file} -o {output_file}.html")
+        if shutil.which("xsltproc") is None: 
+            logging.error("xsltproc is not installed and nmap html report will not generated!")                        
+        else: 
+            os.system(f"xsltproc {output_file} -o {output_file}.html")
 
         return output_file
         
