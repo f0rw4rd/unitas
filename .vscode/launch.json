@@ -71,6 +71,18 @@
                 "--rescan",
                 "test"
             ]
+        },
+        {
+            "name": "Start Parser with export",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "unitas.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-e",
+                "--export",
+                "test"
+            ]
         }
     ]
 }

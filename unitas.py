@@ -13,9 +13,44 @@ import logging
 from collections import defaultdict
 from abc import ABC, abstractmethod
 from functools import lru_cache
+import time
+import requests
+import urllib3 
+import configparser
 
 
 __version__ = "1.0.0"
+
+class UnitasConfig:
+    def __init__(self, config_file: str='~/.unitas'):
+        self.config_file = os.path.expanduser(config_file)
+        self.config = configparser.ConfigParser()
+
+        if not os.path.exists(self.config_file):
+            logging.error(f"Config file {config_file} was not found creating default")
+            self.create_template_config()
+        else:
+            self.config.read(self.config_file)
+
+    def create_template_config(self):
+        self.config['nessus'] = {
+            'secret_key': '',
+            'access_key': '',
+            'url': 'https://127.0.0.1:8834'
+        }
+        with open(self.config_file, 'w') as file:
+            self.config.write(file)
+        logging.info(f"Template config file created at {self.config_file}. Please update the settings.")
+
+    def get_secret_key(self):
+        return self.config.get('nessus', 'secret_key')
+
+    def get_access_key(self):
+        return self.config.get('nessus', 'access_key')
+
+    def get_url(self):
+        return self.config.get('nessus', 'url')
+
 
 
 class PortDetails:
@@ -531,6 +566,104 @@ class NmapParser(ScanParser):
             if port.find("state[@state='open']") is not None:
                 h.add_port_details(self._parse_port_item(port))
 
+class NessusExporter:
+
+    def __init__(self, access_key: str, secret_key: str, url: str):
+        if not access_key or not secret_key:
+            raise ValueError("Secret or access key was empty!")
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.url = url
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    
+    def _auth(self, header: Dict[str, str] = {}) -> Dict[str, str]:
+        header['X-ApiKeys'] = f'accessKey={self.access_key}; secretKey={self.secret_key}'
+        return header
+
+    
+    def _auth_json(self, header: Dict[str, str] = {}) -> Dict[str, str]:        
+        header = self._auth(header)
+        header['Content-Type'] = 'application/json'
+        return header
+
+    def _do_post(self, url: str, data: dict, headers: dict) -> Dict:        
+        resp = requests.post(f"{self.url}/{url}", headers=headers, json=data, verify=False)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _do_get(self, url: str, headers: dict) -> Dict:
+        resp = requests.get(f"{self.url}/{url}", headers=headers, verify=False)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _initiate_export(self, scan_id):        
+        logging.info(f"Initiating export for scan ID: {scan_id} nessus format")
+        return self._do_post(f"scans/{scan_id}/export", {"format": "nessus", 'chapters': ''}, self._auth_json())['file']
+
+    def _check_export_status(self, scan_id, file_id):
+        logging.info(f"Checking export status for scan ID: {scan_id}, file ID: {file_id}")
+        while True:
+            status = self._do_get(f'/scans/{scan_id}/export/{file_id}/status', self._auth_json())['status']
+            if status == 'ready':
+                logging.info(f"Export is ready for download for scan ID: {scan_id}")
+                break
+            logging.debug("Export is not ready yet, waiting 5 seconds...")
+            time.sleep(5)
+
+
+    def _list_scans(self) -> List[Dict]:
+        logging.info("Listing nessus scans")
+        scans = self._do_get("scans", self._auth_json())['scans']
+        export_scans = []
+        for x in scans:
+            if x["status"] in ["cancled", "running"]: 
+                logging.warning(f"Skipping scan \"{x['name']}\" because status is {x['status']}")            
+            else: 
+                export_scans.append(x)
+        return export_scans
+
+    def _download_export(self, scan: dict, file_id: str):
+        scan_id = scan['id']
+        scan_name = scan['name'].replace(' ', '_').replace('/', '_').replace('\\', '_')  # Sanitize filename
+        filename = f"{scan_name}.nessus"
+        if os.path.exists(filename):
+            logging.error(f"Export file {filename} already exists. Skipping download.")
+            return
+        logging.info(f"Downloading export for scan ID: {scan_id}, Scan Name: {scan_name}")            
+
+        response = requests.get(f"{self.url}/scans/{scan_id}/export/{file_id}/download", headers=self._auth(), stream=True, verify=False)
+        response.raise_for_status()
+        with open(filename, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        logging.info(f"Download completed successfully for scan {scan_name}")
+
+
+    def export(self, target_dir: str):
+        scans = self._list_scans()
+
+        if not scans: 
+            logging.error("No scans found!")
+            return
+        
+        for scan in scans:
+            scan_id = scan['id']
+            scan_name = scan['name']
+            if scan_name.lower() == "merged":
+                logging.info(f"Skipping export for scan named 'merged'")
+                continue
+            
+            sanitized_scan_name = scan_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+            nessus_filename = f"{sanitized_scan_name}.nessus"
+
+            if not os.path.exists(nessus_filename):
+                nessus_file_id = self._initiate_export(scan_id)
+                self._check_export_status(scan_id, nessus_file_id)
+                self._download_export(scan, nessus_file_id)
+            else:
+                logging.info(f"Skipping export for {nessus_filename} as it already exists.")
+
 
 class CustomFormatter(logging.Formatter):
     """
@@ -747,6 +880,14 @@ def main() -> None:
         help="Print a nmap command to re-scan the ports not service scanned",
     )
 
+    parser.add_argument(
+        "-e",
+        "--export",
+        action="store_true",
+        default=False,
+        help="Export all scans from nessus",
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -758,9 +899,16 @@ def main() -> None:
 
     logging.info(f"Unitas v{__version__} starting up.")
 
+    config = UnitasConfig()
+
     if not os.path.exists(args.scan_folder):
         folder = os.path.abspath(args.scan_folder)
         logging.error(f"Source folder {folder} was not found!")
+        return
+
+    if args.export: 
+        logging.info(f"Starting nessus export to {os.path.abspath(args.scan_folder)}")
+        NessusExporter(config.get_access_key(), config.get_secret_key(), config.get_url()).export(args.scan_folder)        
         return
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
