@@ -641,6 +641,34 @@ def parse_files_concurrently(
     return global_state
 
 
+def generate_nmap_scan_command(global_state: Dict[str, HostScanData]) -> str:
+    scan_types: set[str] = set()
+    tcp_ports: set[str] = set()
+    udp_ports: set[str] = set()
+    targets: set[str] = set()
+    for ip, host_data in global_state.items():
+        for port in host_data.ports:
+            if "?" in port.service:
+                if port.protocol == "tcp":
+                    tcp_ports.add(port.port)
+                    scan_types.add("S")
+                elif port.protocol == "udp":
+                    udp_ports.add(port.port)
+                    scan_types.add("U")
+                targets.add(ip)
+
+    if not tcp_ports and not udp_ports:
+        return "no ports found for re-scanning"
+    ports = "-p"
+    if tcp_ports:
+        ports += "T:" + ",".join(tcp_ports)
+    if udp_ports:
+        if tcp_ports:
+            ports += ","
+        ports += "U:" + ",".join(udp_ports)
+    return f"sudo nmap -s{''.join(scan_types)} -sV -v {ports} {' '.join(targets)}"
+
+
 def filter_uncertain_services(
     global_state: Dict[str, HostScanData]
 ) -> Dict[str, HostScanData]:
@@ -702,6 +730,14 @@ def main() -> None:
         help="Show only service scanned ports",
     )
 
+    parser.add_argument(
+        "-r",
+        "--rescan",
+        action="store_true",
+        default=False,
+        help="Print a nmap command to re-scan the ports not service scanned",
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -741,8 +777,14 @@ def main() -> None:
             logging.error(f"Failed to parse {p.file_path}: {e}")
 
     final_state = merge_states(existing_state, global_state)
+
     if not final_state:
         logging.error("Did not find any open ports!")
+        return
+
+    if args.rescan:
+        logging.info("nmap command to re-scan all non service scanned ports")
+        logging.info(generate_nmap_scan_command(final_state))
         return
 
     if args.service:

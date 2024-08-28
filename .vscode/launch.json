@@ -59,6 +59,18 @@
                 "--service",
                 "test"
             ]
+        },
+        {
+            "name": "Start Parser with rescan",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "unitas.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-v",
+                "--rescan",
+                "test"
+            ]
         }
     ]
 }
