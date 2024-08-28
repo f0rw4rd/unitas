@@ -92,7 +92,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "imap",
-                "comment": "",
+                "comment": "hMailServer imapd",
             },
         )
         # test service scan with https
@@ -108,7 +108,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "https",
-                "comment": "Has TLS",
+                "comment": "lighttpd;TLS",
             },
         )
         # test service with TLS
@@ -124,7 +124,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "routeros-api",
-                "comment": "Has TLS",
+                "comment": "MikroTik RouterOS API;TLS",
             },
         )
         # test if tcpwrapped is displayed as unknown
@@ -156,7 +156,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "ftp",
-                "comment": "Has TLS",
+                "comment": "ProFTPD or KnFTPD;TLS",
             },
         )
 
