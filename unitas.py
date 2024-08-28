@@ -485,6 +485,12 @@ class NmapParser(ScanParser):
                 service += "?"
             else:
                 service = PortDetails.get_service_name(service)
+                product = service_element.attrib.get("product", "")
+                if product:
+                    comment += product
+                version = service_element.attrib.get("version", "")
+                if version:
+                    comment += " " + version
 
             if service_element.attrib.get("tunnel", "none") == "ssl":
                 # nmap is not is not consistent with http/tls and https
@@ -505,7 +511,10 @@ class NmapParser(ScanParser):
         if tls_found:
             if service == "http":
                 service = "https"
-            comment += "Has TLS"
+            if comment:
+                comment += ";"
+
+            comment += "TLS"
 
         return PortDetails(
             port=portid,
@@ -782,6 +791,17 @@ def main() -> None:
         logging.error("Did not find any open ports!")
         return
 
+    if hostup_dict:
+        logging.info(
+            f"Found {len(hostup_dict)} hosts that are up, but have no open ports"
+        )
+        up_file: str = "/tmp/up.txt"
+        with open(up_file, "w") as f:
+            for ip, reason in hostup_dict.items():
+                print(f"UP:{ip}:{reason}")
+                f.write(f"{ip}\n")
+            logging.info(f"Wrote list of host without open ports to {up_file}")
+
     if args.rescan:
         logging.info("nmap command to re-scan all non service scanned ports")
         logging.info(generate_nmap_scan_command(final_state))
@@ -805,14 +825,6 @@ def main() -> None:
     else:
         md_converter = MarkdownConvert(final_state)
         md_content = md_converter.convert(True)
-
-        if hostup_dict:
-            logging.info(
-                f"Found {len(hostup_dict)} hosts that are up, but have no open ports"
-            )
-            for ip, reason in hostup_dict.items():
-                logging.info(f"{ip}:{reason}")
-            print("")
 
         logging.info("Updated state saved to state.md")
         with open("state.md", "w") as f:
