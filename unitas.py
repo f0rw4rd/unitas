@@ -1,7 +1,7 @@
 import glob
 import threading
 import xml.etree.ElementTree as ET
-from xml.etree.ElementTree import ParseError
+from xml.etree.ElementTree import ParseError, Element
 from typing import Dict, List, Optional, Tuple, Any, Type
 import os
 import concurrent.futures
@@ -575,45 +575,47 @@ class NessusExporter:
         self.access_key = access_key
         self.secret_key = secret_key
         self.url = url
+
+        self.ses = requests.Session()
+        self.ses.headers.update({'X-ApiKeys': f'accessKey={self.access_key}; secretKey={self.secret_key}'})
+        self.ses.verify = False # yeah i know :D
+
+        def error_handler(r, *args, **kwargs):            
+            if not r.ok:
+                logging.error(f"Problem with nessus API: {r.text}")
+            r.raise_for_status()
+
+        self.ses.hooks = {
+            'response': error_handler
+        }
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     
     def upload_scan(self, file_path: str, name: str):
         for scan in  self._list_scans():
-            resp = requests.delete(f"{self.url}/scans/{scan['id']}", headers=self._auth_json(), verify=False)
-            resp.raise_for_status()
-        # {folder_id: 3, file: "merged_report-2.nessus"}
-        return scans
-
-    
-    def _auth(self, header: Dict[str, str] = {}) -> Dict[str, str]:
-        header['X-ApiKeys'] = f'accessKey={self.access_key}; secretKey={self.secret_key}'
-        return header
-
-    
-    def _auth_json(self, header: Dict[str, str] = {}) -> Dict[str, str]:        
-        header = self._auth(header)
-        header['Content-Type'] = 'application/json'
-        return header
-
-    def _do_post(self, url: str, data: dict, headers: dict) -> Dict:        
-        resp = requests.post(f"{self.url}/{url}", headers=headers, json=data, verify=False)
-        resp.raise_for_status()
-        return resp.json()
-
-    def _do_get(self, url: str, headers: dict) -> Dict:
-        resp = requests.get(f"{self.url}/{url}", headers=headers, verify=False)
-        resp.raise_for_status()
-        return resp.json()
+            # 2 is the trash folder
+            if scan["name"] == "Merged Report" and scan["folder_id"] != 2:
+                logging.info(f"Deleting scan {scan['id']}")                
+                self.ses.delete(f"{self.url}/scans/{scan['id']}")
+        self._upload_file(file_path)        
+        # 
+        
+    def _upload_file(self, filename: str):
+        if not os.path.isfile(filename):
+            raise Exception("This file does not exist.")
+        with open(filename, "rb") as file:
+            resp = self.ses.post(f"{self.url}/file/upload", files={"Filedata": file, "no_enc": "0"})
+            file_name = resp.json()['fileuploaded']
+            self.ses.post(f"http://127.0.0.1:1234/scans/import", json={"folder_id": 3, "file": file_name})
 
     def _initiate_export(self, scan_id):        
         logging.info(f"Initiating export for scan ID: {scan_id} nessus format")
-        return self._do_post(f"scans/{scan_id}/export", {"format": "nessus", 'chapters': ''}, self._auth_json())['file']
+        return self.ses.post(f"{self.url}/scans/{scan_id}/export", json={"format": "nessus", 'chapters': ''}).json()['file']
 
     def _check_export_status(self, scan_id, file_id):
         logging.info(f"Checking export status for scan ID: {scan_id}, file ID: {file_id}")
         while True:
-            status = self._do_get(f'/scans/{scan_id}/export/{file_id}/status', self._auth_json())['status']
+            status = self.ses.get(f'{self.url}/scans/{scan_id}/export/{file_id}/status').json()['status']
             if status == 'ready':
                 logging.info(f"Export is ready for download for scan ID: {scan_id}")
                 break
@@ -623,7 +625,7 @@ class NessusExporter:
 
     def _list_scans(self) -> List[Dict]:
         logging.info("Listing nessus scans")
-        scans = self._do_get("scans", self._auth_json())['scans']
+        scans = self.ses.get(f"{self.url}/scans").json()['scans']
         export_scans = []
         for x in scans:
             if x["status"] in ["cancled", "running"]: 
@@ -639,9 +641,8 @@ class NessusExporter:
         if os.path.exists(filename):
             logging.error(f"Export file {filename} already exists. Skipping download.")
             return
-        logging.info(f"Downloading export for scan ID: {scan_id}, Scan Name: {scan_name}")            
-
-        response = requests.get(f"{self.url}/scans/{scan_id}/export/{file_id}/download", headers=self._auth(), stream=True, verify=False)
+        logging.info(f"Downloading export for scan ID: {scan_id}, Scan Name: {scan_name}")     
+        response = self.ses.get(f"{self.url}/scans/{scan_id}/export/{file_id}/download", stream=True)
         response.raise_for_status()
         with open(filename, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -684,13 +685,159 @@ class ScanMerger(ABC):
         files = glob.glob(os.path.join(self.directory, '**', wildcard), recursive=True)
         return [file for file in files if self.output_directory not in file]
 
-    def save_report(self) -> str: 
+    def parse(self):
+        pass
+
+
+
+class NmapHost: 
+
+    def __init__(self, ip: str, host: Element):
+        self.ip = ip
+        self.host: Element = host
+        self.hostnames: List[Element] = []
+        self.ports: List[Element] = []
+        self.hostscripts: List[Element] = []
+        self.os_e: Element = None        
+
+    def elements_equal(self, e1: Element, e2: Element):
+        if e1.tag != e2.tag: return False
+        if e1.text != e2.text: return False
+        if e1.tail != e2.tail: return False
+        if e1.attrib != e2.attrib: return False
+        if len(e1) != len(e2): return False
+        return all(self.elements_equal(c1, c2) for c1, c2 in zip(e1, e2))
+
+
+    def add_port(self, port: Element):
+        if not any(self.elements_equal(e, port) for e in self.ports):
+            self.ports.append(port)      
+
+    def add_hostname(self, hostname: Element):
+        if not any(self.elements_equal(e, hostname) for e in self.hostnames):
+            self.hostnames.append(hostname)
+    
+    def add_hostscript(self, hostscript: Element):
+        if not any(self.elements_equal(e, hostscript) for e in self.hostscripts):
+            self.hostscripts.append(hostscript)
+
+
+
+class NmapMerger(ScanMerger):
+
+    def __init__(self, directory: str, output_directory: str):        
+        super().__init__(directory, output_directory)
+        self.output_file: str = "merged_nmap.xml"
+        self.filter: str = "*.xml"         
+        self.template: str = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.94 scan initiated Sun Sep 24 17:54:20 2023 as: nmap -sS -sV -sC -T5 -p- -n -Pn -oA ./mailsrv1/full_scan.nmap 192.168.214.242 -->
+<nmaprun scanner="nmap" args="nmap -sS -sV -sC -T5 -p- -n -Pn -oA ./mailsrv1/full_scan.nmap 192.168.214.242" start="1695570860" startstr="Sun Sep 24 17:54:20 2023" version="7.94" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="1000" services="1-1000"/>
+<verbose level="0"/>
+<debugging level="0"/>
+{{host}}
+<runstats>
+<finished time="1315618434" timestr="Fri Sep  9 18:33:54 2011" elapsed="13.66" summary="Nmap done at Fri Sep  9 18:33:54 2011; 1 IP address (1 host up) scanned in 13.66 seconds" exit="success"/>
+<hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>
+        """
+
+    def parse(self):
+        hosts: Dict[str, NmapHost] = {}
+        for file_path in self.search(self.filter):
+            logging.info(f"Trying to parse {file_path}")
+            try: 
+                root = ET.parse(file_path)
+                for host in root.findall(".//host"):                    
+                    status = host.find(".//status")
+                    if status is not None and status.attrib.get("state") == "up":
+                        address = host.find(".//address")                        
+                        if address is not None:  # explicit None check is needed
+                            host_ip: str = address.attrib.get("addr", "")                            
+                            if not host_ip in hosts:
+                                nhost = NmapHost(host_ip, host)
+                                hosts[host_ip] = nhost
+                            else: 
+                                nhost = hosts[host_ip]
+                            ports = host.find("ports")
+                            if  ports is not None:                                                                 
+                                for x in ports.findall("extraports"): 
+                                    ports.remove(x)
+
+                                for port in ports.findall("port[state]"):                                    
+                                    if port.find("state[@state='open']") is not None:
+                                        nhost.add_port(port)
+                                    ports.remove(port)
+
+                            hostnames = host.find("hostnames")
+                            if hostnames is not None: 
+                                for x in hostnames:
+                                    hostnames.remove(x)
+                                    nhost.add_hostname(x)  
+
+                            for x in host.findall(".//hostscript"):
+                                host.remove(x)
+                                nhost.add_hostscript(x) 
+                                
+
+                            os_e = host.find(".//os")                       
+                            if os_e is not None: 
+                                host.remove(os_e)
+                                nhost.os_e = os_e
+            except ParseError as e:
+                logging.error("Failed to parse nmap xml")
+                continue
+        self._render_template(hosts)
+            
+    def _render_template(self, hosts: Dict[str, NmapHost]) -> str:
+        payload: str = ""
+        for ip, nhost in hosts.items():
+            host = nhost.host
+            ports = host.find("ports")
+            for p in nhost.ports:
+                ports.append(p)
+            # clear all child elements
+            # add all of them
+            hostnames = host.find("hostnames")
+            for p in nhost.hostnames:
+                hostnames.append(p)
+
+            hostnames = host.find("hostnames")
+            for p in nhost.hostnames:
+                hostnames.append(p)            
+
+            hostscripts = host.find("hostscripts")
+            if not hostscripts:
+                hostscripts = ET.fromstring("<hostscripts></hostscripts>")
+                host.append(hostscripts)
+            for p in nhost.hostscripts:
+                hostscripts.append(p)
+
+            payload += ET.tostring(host).decode()
+        data = self.template.replace("{{host}}", payload)
+        
         if not os.path.exists(self.output_directory):
             os.makedirs(self.output_directory)
+        
         output_file = os.path.join(self.output_directory, self.output_file)
-        self.tree.write(output_file, encoding="utf-8", xml_declaration=True)
+        
+        with open(output_file, "w") as f:
+            f.write(data)
+        
         logging.info(f"Saving merged scan to {output_file}")
+
+        os.system(f"xsltproc {output_file} -o {output_file}.html")
+
         return output_file
+        
+
+    def save_report(self) -> str:
+        pass
+        # TBD add code to convert HTML
+
     
 class NessusMerger(ScanMerger):
 
@@ -701,10 +848,10 @@ class NessusMerger(ScanMerger):
         self.output_file: str = "merged_report.nessus"
         self.filter: str = "*.nessus"
 
-    def parse_files(self):        
+    def parse(self):        
         first_file_parsed = True        
         for file_path in self.search(self.filter):
-            logging.info(f"Parsing - {file_path}")        
+            logging.info(f"Parsing - {file_path}")
             if first_file_parsed:
                 self.tree = ET.parse(file_path)
                 self.report = self.tree.find('Report')
@@ -728,6 +875,14 @@ class NessusMerger(ScanMerger):
             if not existing_host.find(f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"):
                 logging.debug(f"Adding finding: {item.attrib['port']}:{item.attrib['pluginID']}")
                 existing_host.append(item)
+
+    def save_report(self) -> str: 
+        if not os.path.exists(self.output_directory):
+            os.makedirs(self.output_directory)
+        output_file = os.path.join(self.output_directory, self.output_file)
+        self.tree.write(output_file, encoding="utf-8", xml_declaration=True)
+        logging.info(f"Saving merged scan to {output_file}")
+        return output_file
 
 
 class CustomFormatter(logging.Formatter):
@@ -984,11 +1139,18 @@ def main() -> None:
 
     if args.merge: 
         logging.info("Starting to merge scans!")        
-        merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
-        merger.parse_files()
-        file = merger.save_report()
-        logging.info("Trying to upload the merged scan!")
-        NessusExporter().upload_scan(file)
+
+        merger = NmapMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
+        merger.parse()        
+
+        #merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
+        #merger.parse()
+        #merger.save_report()
+        
+
+        # upload does not work on scanner because tenable disabled support for manager only :-/
+        #logging.info("Trying to upload the merged scan!")
+        #NessusExporter().upload_scan(file, "merged")
         return
 
 
