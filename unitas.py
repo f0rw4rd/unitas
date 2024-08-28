@@ -172,7 +172,7 @@ class ThreadSafeServiceLookup:
 
 service_lookup = ThreadSafeServiceLookup()
 hostup_dict = defaultdict(dict)
-
+config = UnitasConfig()
 
 class HostScanData:
     def __init__(self, ip: str):
@@ -568,13 +568,22 @@ class NmapParser(ScanParser):
 
 class NessusExporter:
 
-    def __init__(self, access_key: str, secret_key: str, url: str):
+    def __init__(self):
+        access_key, secret_key, url = config.get_access_key(), config.get_secret_key(), config.get_url()
         if not access_key or not secret_key:
             raise ValueError("Secret or access key was empty!")
         self.access_key = access_key
         self.secret_key = secret_key
         self.url = url
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    
+    def upload_scan(self, file_path: str, name: str):
+        for scan in  self._list_scans():
+            resp = requests.delete(f"{self.url}/scans/{scan['id']}", headers=self._auth_json(), verify=False)
+            resp.raise_for_status()
+        # {folder_id: 3, file: "merged_report-2.nessus"}
+        return scans
 
     
     def _auth(self, header: Dict[str, str] = {}) -> Dict[str, str]:
@@ -664,27 +673,45 @@ class NessusExporter:
             else:
                 logging.info(f"Skipping export for {nessus_filename} as it already exists.")
 
-
-class NessusMerger:
-
+class ScanMerger(ABC): 
     def __init__(self, directory: str, output_directory: str):
-        self.directory: str = directory
+        self.directory = directory
+        self.output_directory = output_directory     
+        self.output_file: str = None
+        self.filter: str = None   
+
+    def search(self, wildcard: str) -> List[str]:
+        files = glob.glob(os.path.join(self.directory, '**', wildcard), recursive=True)
+        return [file for file in files if self.output_directory not in file]
+
+    def save_report(self) -> str: 
+        if not os.path.exists(self.output_directory):
+            os.makedirs(self.output_directory)
+        output_file = os.path.join(self.output_directory, self.output_file)
+        self.tree.write(output_file, encoding="utf-8", xml_declaration=True)
+        logging.info(f"Saving merged scan to {output_file}")
+        return output_file
+    
+class NessusMerger(ScanMerger):
+
+    def __init__(self, directory: str, output_directory: str):        
+        super().__init__(directory, output_directory)        
         self.tree: ET.ElementTree = None
-        self.root: ET.Element = None
-        self.output_directory:str = output_directory
+        self.root: ET.Element = None        
+        self.output_file: str = "merged_report.nessus"
+        self.filter: str = "*.nessus"
 
     def parse_files(self):        
-        first_file_parsed = True
-        nessus_files = glob.glob(os.path.join(self.directory, '**', '*.nessus'), recursive=True)
-        nessus_files = [file for file in nessus_files if self.output_directory not in file]
-        for file_path in nessus_files:
+        first_file_parsed = True        
+        for file_path in self.search(self.filter):
             logging.info(f"Parsing - {file_path}")        
             if first_file_parsed:
                 self.tree = ET.parse(file_path)
                 self.report = self.tree.find('Report')
                 self.report.attrib['name'] = 'Merged Report'            
+                first_file_parsed = False
             else: 
-                tree = ET.parse(file_path)
+                tree = ET.parse(file_path)                
                 self._merge_hosts(tree)
 
     def _merge_hosts(self, tree):
@@ -701,13 +728,6 @@ class NessusMerger:
             if not existing_host.find(f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"):
                 logging.debug(f"Adding finding: {item.attrib['port']}:{item.attrib['pluginID']}")
                 existing_host.append(item)
-
-    def save_report(self):
-        if not os.path.exists(self.output_directory):
-            os.makedirs(self.output_directory)
-        output_file = os.path.join(self.output_directory, "merged_report.nessus")
-        self.tree.write(output_file, encoding="utf-8", xml_declaration=True)
-        logging.info(f"Merged report saved to: {output_file}")
 
 
 class CustomFormatter(logging.Formatter):
@@ -952,8 +972,6 @@ def main() -> None:
 
     logging.info(f"Unitas v{__version__} starting up.")
 
-    config = UnitasConfig()
-
     if not os.path.exists(args.scan_folder):
         folder = os.path.abspath(args.scan_folder)
         logging.error(f"Source folder {folder} was not found!")
@@ -961,8 +979,18 @@ def main() -> None:
 
     if args.export: 
         logging.info(f"Starting nessus export to {os.path.abspath(args.scan_folder)}")
-        NessusExporter(config.get_access_key(), config.get_secret_key(), config.get_url()).export(args.scan_folder)        
+        NessusExporter().export(args.scan_folder)        
         return
+
+    if args.merge: 
+        logging.info("Starting to merge scans!")        
+        merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
+        merger.parse_files()
+        file = merger.save_report()
+        logging.info("Trying to upload the merged scan!")
+        NessusExporter().upload_scan(file)
+        return
+
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
         args.scan_folder
@@ -1008,13 +1036,7 @@ def main() -> None:
         logging.info(generate_nmap_scan_command(final_state))
         return
 
-    if args.merge: 
-        logging.info("Starting to merge scans!")        
-        merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
-        merger.parse_files()
-        merger.save_report()
-        return
-
+  
     if args.service:
         logging.info("Filtering non-service scanned ports")
         final_state = filter_uncertain_services(final_state)
