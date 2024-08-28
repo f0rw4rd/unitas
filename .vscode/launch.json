@@ -19,7 +19,7 @@
             "console": "integratedTerminal",
             "args": [
                 "-v",
-                "test"
+                "tests"
             ]
         },
         {
@@ -93,7 +93,7 @@
             "args": [
                 "-v",
                 "--merge",
-                "test"
+                "tests"
             ]
         }
     ]

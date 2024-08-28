@@ -708,10 +708,19 @@ class NmapHost:
         if len(e1) != len(e2): return False
         return all(self.elements_equal(c1, c2) for c1, c2 in zip(e1, e2))
 
+    def find_port(self, protocol: str, portid: str) -> Element:
+        for p in self.ports:
+            if p.get('protocol') == protocol and p.get('portid') == portid:
+                return p
+        return None
 
     def add_port(self, port: Element):
-        if not any(self.elements_equal(e, port) for e in self.ports):
-            self.ports.append(port)      
+        p_old = self.find_port(port.get("protocol"), port.get("portid"))
+        if not p_old: 
+            self.ports.append(port)
+        elif len(ET.tostring(p_old)) < len(ET.tostring(port)):
+            self.ports.remove(p_old)
+            self.ports.append(port)
 
     def add_hostname(self, hostname: Element):
         if not any(self.elements_equal(e, hostname) for e in self.hostnames):
@@ -797,6 +806,10 @@ class NmapMerger(ScanMerger):
         for ip, nhost in hosts.items():
             host = nhost.host
             ports = host.find("ports")
+
+            if len(nhost.ports) == 0:
+                continue
+
             for p in nhost.ports:
                 ports.append(p)
             # clear all child elements
@@ -850,16 +863,19 @@ class NessusMerger(ScanMerger):
 
     def parse(self):        
         first_file_parsed = True        
-        for file_path in self.search(self.filter):
+        for file_path in self.search(self.filter):            
             logging.info(f"Parsing - {file_path}")
-            if first_file_parsed:
-                self.tree = ET.parse(file_path)
-                self.report = self.tree.find('Report')
-                self.report.attrib['name'] = 'Merged Report'            
-                first_file_parsed = False
-            else: 
-                tree = ET.parse(file_path)                
-                self._merge_hosts(tree)
+            try:
+                if first_file_parsed:
+                    self.tree = ET.parse(file_path)
+                    self.report = self.tree.find('Report')
+                    self.report.attrib['name'] = 'Merged Report'            
+                    first_file_parsed = False
+                else: 
+                    tree = ET.parse(file_path)                
+                    self._merge_hosts(tree)
+            except ParseError:
+                logging.error("Failed to parse")            
 
     def _merge_hosts(self, tree):
         for host in tree.findall('.//ReportHost'):
@@ -1143,9 +1159,9 @@ def main() -> None:
         merger = NmapMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
         merger.parse()        
 
-        #merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
-        #merger.parse()
-        #merger.save_report()
+        merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
+        merger.parse()
+        merger.save_report()
         
 
         # upload does not work on scanner because tenable disabled support for manager only :-/
