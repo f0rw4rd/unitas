@@ -665,6 +665,51 @@ class NessusExporter:
                 logging.info(f"Skipping export for {nessus_filename} as it already exists.")
 
 
+class NessusMerger:
+
+    def __init__(self, directory: str, output_directory: str):
+        self.directory: str = directory
+        self.tree: ET.ElementTree = None
+        self.root: ET.Element = None
+        self.output_directory:str = output_directory
+
+    def parse_files(self):        
+        first_file_parsed = True
+        nessus_files = glob.glob(os.path.join(self.directory, '**', '*.nessus'), recursive=True)
+        nessus_files = [file for file in nessus_files if self.output_directory not in file]
+        for file_path in nessus_files:
+            logging.info(f"Parsing - {file_path}")        
+            if first_file_parsed:
+                self.tree = ET.parse(file_path)
+                self.report = self.tree.find('Report')
+                self.report.attrib['name'] = 'Merged Report'            
+            else: 
+                tree = ET.parse(file_path)
+                self._merge_hosts(tree)
+
+    def _merge_hosts(self, tree):
+        for host in tree.findall('.//ReportHost'):
+            existing_host = self.report.find(f".//ReportHost[@name='{host.attrib['name']}']")
+            if not existing_host:
+                logging.debug(f"Adding host: {host.attrib['name']}")
+                self.report.append(host)
+            else:
+                self._merge_report_items(host, existing_host)
+
+    def _merge_report_items(self, host, existing_host):
+        for item in host.findall('ReportItem'):
+            if not existing_host.find(f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"):
+                logging.debug(f"Adding finding: {item.attrib['port']}:{item.attrib['pluginID']}")
+                existing_host.append(item)
+
+    def save_report(self):
+        if not os.path.exists(self.output_directory):
+            os.makedirs(self.output_directory)
+        output_file = os.path.join(self.output_directory, "merged_report.nessus")
+        self.tree.write(output_file, encoding="utf-8", xml_declaration=True)
+        logging.info(f"Merged report saved to: {output_file}")
+
+
 class CustomFormatter(logging.Formatter):
     """
     Custom logging formatter to add tags for different log levels.
@@ -888,6 +933,14 @@ def main() -> None:
         help="Export all scans from nessus",
     )
 
+    parser.add_argument(
+        "-m",
+        "--merge",
+        action="store_true",
+        default=False,
+        help="Merge scans in the folder",
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -953,6 +1006,13 @@ def main() -> None:
     if args.rescan:
         logging.info("nmap command to re-scan all non service scanned ports")
         logging.info(generate_nmap_scan_command(final_state))
+        return
+
+    if args.merge: 
+        logging.info("Starting to merge scans!")        
+        merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
+        merger.parse_files()
+        merger.save_report()
         return
 
     if args.service:

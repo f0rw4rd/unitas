@@ -83,6 +83,18 @@
                 "--export",
                 "test"
             ]
+        },
+        {
+            "name": "Start Parser with merger",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "unitas.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-v",
+                "--merge",
+                "test"
+            ]
         }
     ]
 }
