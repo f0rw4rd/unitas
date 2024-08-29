@@ -432,7 +432,7 @@ class NessusParser(ScanParser):
         ):
             if service == "http":
                 service = "https"
-            comment = "Has TLS"
+            comment = "TLS"
         state: str = "TBD"
         return PortDetails(
             port=port, service=service, comment=comment, state=state, protocol=protocol
@@ -1065,6 +1065,10 @@ def filter_uncertain_services(
 
 
 def main() -> None:
+    # TBD: add format flag
+    # TBD: remove up host from stdin
+    # TBD: skipp Merged_Report during export
+    # TBD: check scan
     parser = argparse.ArgumentParser(
         description=f"Unitas v{__version__}: A network scan parser and analyzer",
         epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
