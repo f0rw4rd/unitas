@@ -721,6 +721,7 @@ class NmapHost:
         self.ports: List[Element] = []
         self.hostscripts: List[Element] = []
         self.os_e: Element = None        
+        self.reason: str = None
 
     def elements_equal(self, e1: Element, e2: Element):
         if e1.tag != e2.tag: return False
@@ -793,16 +794,21 @@ class NmapMerger(ScanMerger):
                                 hosts[host_ip] = nhost
                             else: 
                                 nhost = hosts[host_ip]
+
+                            nhost.reason = status.attrib.get("reason", "user-set")
                             ports = host.find("ports")
                             if  ports is not None:                                                                 
                                 for x in ports.findall("extraports"): 
                                     ports.remove(x)
 
-                                for port in ports.findall("port[state]"):                                    
-                                    if port.find("state[@state='open']") is not None:
+                                for port in ports.findall("port[state]"): 
+                                    state = port.find("state")                         
+                                    if port.attrib.get("protocol", "udp") == "udp" and state.attrib.get("state", "open|filtered") == "open|filtered" and state.attrib.get("reason", "no-response") == "no-response":
+                                        pass
+                                    else:
                                         nhost.add_port(port)
                                     ports.remove(port)
-
+                            
                             hostnames = host.find("hostnames")
                             if hostnames is not None: 
                                 for x in hostnames:
@@ -811,7 +817,7 @@ class NmapMerger(ScanMerger):
 
                             for x in host.findall(".//hostscript"):
                                 host.remove(x)
-                                nhost.add_hostscript(x) 
+                                nhost.add_hostscript(x)
                                 
 
                             os_e = host.find(".//os")                       
@@ -828,9 +834,16 @@ class NmapMerger(ScanMerger):
         for ip, nhost in hosts.items():
             host = nhost.host
             ports = host.find("ports")
-
-            if len(nhost.ports) == 0:
+            
+            # odd case where the host is up, but not port was found
+            if nhost.reason == "user-set" and len(nhost.ports) == 0:
                 continue
+
+            # if the first scan had no ports, we need to add the element again
+            if ports is None: 
+
+                ports = ET.fromstring("<ports></ports>")
+                host.append(ports)
 
             for p in nhost.ports:
                 ports.append(p)
@@ -916,6 +929,9 @@ class NessusMerger(ScanMerger):
         if not os.path.exists(self.output_directory):
             os.makedirs(self.output_directory)
         output_file = os.path.join(self.output_directory, self.output_file)
+        if self.tree is None: 
+            logging.error("Generated Nessus was empty")
+            return
         self.tree.write(output_file, encoding="utf-8", xml_declaration=True)
         logging.info(f"Saving merged scan to {output_file}")
         return output_file
