@@ -406,8 +406,12 @@ class NessusParser(ScanParser):
             host = HostScanData(ip)
             if hostname:
                 host.set_hostname(hostname)
-            self._parse_service_detection(block, host)
-            self._parse_port_scanners(block, host)
+            plugin_found = self._parse_service_detection(block, host) > 0 or self._parse_port_scanners(block, host) > 0            
+            # the idea here is if the host has some version or port scan, it must be up
+            # sofar i have not seen a nessus file w
+            if plugin_found and len(host.ports) == 0:
+                if not ip in hostup_dict:
+                    hostup_dict[ip] = "nessus plugin seen"
 
             if len(host.ports) == 0:
                 pass  # TBD: implement this thing, to find nessus host that are up but have no ports
@@ -423,6 +427,8 @@ class NessusParser(ScanParser):
             logging.error(f"Failed to parse nessus service scan: {ET.tostring(item)}")
             return None
         port: str = item.attrib.get("port")
+        if port == "0":  # host scans return port zero, skip
+            return None
         protocol: str = item.attrib.get("protocol")
         service: str = item.attrib.get("svc_name")
         service = PortDetails.get_service_name(service)
@@ -438,9 +444,13 @@ class NessusParser(ScanParser):
             port=port, service=service, comment=comment, state=state, protocol=protocol
         )
 
-    def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> None:
-        for item in block.findall(".//ReportItem[@pluginFamily='Service detection']"):
+    def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> int:
+        counter = 0
+        # xml module has only limited xpath support
+        for item in [b for b in block.findall(".//ReportItem") if b.attrib.get("pluginFamily", "Port Scanner") != "Port Scanner"]:
+            counter += 1
             host.add_port_details(self._parse_service_item(item))
+        return counter
 
     def _parse_port_item(self, item: ET.Element) -> PortDetails:
         if not all(attr in item.attrib for attr in ["port", "protocol", "svc_name"]):
@@ -459,9 +469,13 @@ class NessusParser(ScanParser):
         state: str = "TBD"
         return PortDetails(port=port, service=service, state=state, protocol=protocol)
 
-    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> None:
-        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
-            host.add_port_details(self._parse_port_item(item))
+    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> int:                
+        counter = 0
+        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):                        
+            counter += 1
+            host.add_port_details(self._parse_port_item(item))        
+        return counter
+            
 
 
 class NmapParser(ScanParser):
@@ -742,8 +756,8 @@ class NmapMerger(ScanMerger):
         self.template: str = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE nmaprun>
 <?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
-<!-- Nmap 7.94 scan initiated Sun Sep 24 17:54:20 2023 as: nmap -sS -sV -sC -T5 -p- -n -Pn -oA ./mailsrv1/full_scan.nmap 192.168.214.242 -->
-<nmaprun scanner="nmap" args="nmap -sS -sV -sC -T5 -p- -n -Pn -oA ./mailsrv1/full_scan.nmap 192.168.214.242" start="1695570860" startstr="Sun Sep 24 17:54:20 2023" version="7.94" xmloutputversion="1.05">
+<!-- Merge scan generated -->
+<nmaprun scanner="nmap" args="non merged" start="1695570860" startstr="Sun Sep 24 17:54:20 2023" version="7.94" xmloutputversion="1.05">
 <scaninfo type="syn" protocol="tcp" numservices="1000" services="1-1000"/>
 <verbose level="0"/>
 <debugging level="0"/>

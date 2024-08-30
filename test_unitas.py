@@ -223,7 +223,24 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "https",
-                "comment": "Has TLS",
+                "comment": "TLS",
+            },
+        )
+
+        # test snmp plugin
+        thing = parser._parse_service_item(
+            self._get_element(
+                b'<ReportItem port="161" svc_name="snmp?" protocol="udp" severity="0" pluginID="185519" pluginName="SNMP Server Detection" pluginFamily="SNMP"><description>The remote service is an SNMP agent which provides management data about the device.</description></ReportItem>'
+            )
+        )
+        self.assertDictEqual(
+            thing.__dict__,
+            {
+                "port": "161",
+                "protocol": "udp",
+                "state": "TBD",
+                "service": "snmp",
+                "comment": "",
             },
         )
 
