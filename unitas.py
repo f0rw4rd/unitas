@@ -129,13 +129,15 @@ class PortDetails:
 
     SERVICE_MAPPING: Dict[str, str] = {
         "www": "http",
-        "microsoft-ds": "smb",
+        "microsoft-ds": "smb",        
         "cifs": "smb",
         "ms-wbt-server": "rdp",
     }
 
     @staticmethod
-    def get_service_name(service: str):
+    def get_service_name(service: str, port: str):
+        if port == "445" and service == "netbios-ssn":
+            return "smb"
         if service in PortDetails.SERVICE_MAPPING:
             return PortDetails.SERVICE_MAPPING[service]
         return service
@@ -164,7 +166,7 @@ class ThreadSafeServiceLookup:
                     service = socket.getservbyport(int(port), protocol)
                 except socket.error:
                     service = default_service
-                service = PortDetails.get_service_name(service)
+                service = PortDetails.get_service_name(service, port)
                 self._cache[cache_id] = service
                 return service
         else:
@@ -414,7 +416,7 @@ class NessusParser(ScanParser):
                     hostup_dict[ip] = "nessus plugin seen"
 
             if len(host.ports) == 0:
-                pass  # TBD: implement this thing, to find nessus host that are up but have no ports
+                continue
 
             self.data[ip] = host
         return self.data
@@ -431,7 +433,7 @@ class NessusParser(ScanParser):
             return None
         protocol: str = item.attrib.get("protocol")
         service: str = item.attrib.get("svc_name")
-        service = PortDetails.get_service_name(service)
+        service = PortDetails.get_service_name(service, port)
         comment: str = ""
         if "TLS" in item.attrib.get("pluginName") or "SSL" in item.attrib.get(
             "pluginName", ""
@@ -447,7 +449,7 @@ class NessusParser(ScanParser):
     def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> int:
         counter = 0
         # xml module has only limited xpath support
-        for item in [b for b in block.findall(".//ReportItem") if b.attrib.get("pluginFamily", "Port Scanner") != "Port Scanner"]:
+        for item in [b for b in block.findall(".//ReportItem") if b.attrib.get("pluginFamily", "Port Scanner") not in ["Port Scanner", "Settings"]]:
             counter += 1
             host.add_port_details(self._parse_service_item(item))
         return counter
@@ -465,7 +467,7 @@ class NessusParser(ScanParser):
             service = service_lookup.get_service_name_for_port(port, protocol, service)
             service += "?"
         else:
-            service = PortDetails.get_service_name(service)
+            service = PortDetails.get_service_name(service, port)
         state: str = "TBD"
         return PortDetails(port=port, service=service, state=state, protocol=protocol)
 
@@ -534,7 +536,7 @@ class NmapParser(ScanParser):
                 )
                 service += "?"
             else:
-                service = PortDetails.get_service_name(service)
+                service = PortDetails.get_service_name(service, portid)
                 product = service_element.attrib.get("product", "")
                 if product:
                     comment += product
@@ -583,6 +585,8 @@ class NmapParser(ScanParser):
 
 class NessusExporter:
 
+    report_name = "Merged Report"
+
     def __init__(self):
         access_key, secret_key, url = config.get_access_key(), config.get_secret_key(), config.get_url()
         if not access_key or not secret_key:
@@ -609,7 +613,7 @@ class NessusExporter:
     def upload_scan(self, file_path: str, name: str):
         for scan in  self._list_scans():
             # 2 is the trash folder
-            if scan["name"] == "Merged Report" and scan["folder_id"] != 2:
+            if scan["name"] == NessusExporter.report_name and scan["folder_id"] != 2:
                 logging.info(f"Deleting scan {scan['id']}")                
                 self.ses.delete(f"{self.url}/scans/{scan['id']}")
         self._upload_file(file_path)        
@@ -697,14 +701,17 @@ class ScanMerger(ABC):
         self.filter: str = None   
 
     def search(self, wildcard: str) -> List[str]:
-        files = glob.glob(os.path.join(self.directory, '**', wildcard), recursive=True)
-        return [file for file in files if self.output_directory not in file]
+        files = []
+        for file in glob.glob(os.path.join(self.directory, '**', wildcard), recursive=True):
+            if self.output_directory not in file and self.output_directory.split(".")[0] not in file:
+                files.append(file)
+            else:
+                logging.warning(f"Skipping file {file} to prevent merging a merged scan!")
+        return files
 
     def parse(self):
         pass
-
-
-
+    
 class NmapHost: 
 
     def __init__(self, ip: str, host: Element):
@@ -880,13 +887,13 @@ class NessusMerger(ScanMerger):
 
     def parse(self):        
         first_file_parsed = True        
-        for file_path in self.search(self.filter):            
+        for file_path in self.search(self.filter):             
             logging.info(f"Parsing - {file_path}")
             try:
                 if first_file_parsed:
                     self.tree = ET.parse(file_path)
                     self.report = self.tree.find('Report')
-                    self.report.attrib['name'] = 'Merged Report'            
+                    self.report.attrib['name'] = NessusExporter.report_name
                     first_file_parsed = False
                 else: 
                     tree = ET.parse(file_path)                
@@ -1080,9 +1087,7 @@ def filter_uncertain_services(
 
 def main() -> None:
     # TBD: add format flag
-    # TBD: remove up host from stdin
-    # TBD: skipp Merged_Report during export
-    # TBD: check scan
+    # TBD: remove up host from stdin    
     parser = argparse.ArgumentParser(
         description=f"Unitas v{__version__}: A network scan parser and analyzer",
         epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
@@ -1183,9 +1188,7 @@ def main() -> None:
         merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
         merger.parse()
         merger.save_report()
-        
-
-        # upload does not work on scanner because tenable disabled support for manager only :-/
+        # upload does not work on Nessus pro. because tenable disabled API support. For manager only :-/
         #logging.info("Trying to upload the merged scan!")
         #NessusExporter().upload_scan(file, "merged")
         return
@@ -1215,26 +1218,30 @@ def main() -> None:
 
     final_state = merge_states(existing_state, global_state)
 
-    if not final_state:
-        logging.error("Did not find any open ports!")
-        return
-
     if hostup_dict:
+        # check if the host is up in the final state
+        for ip in final_state.keys():
+            if ip in hostup_dict:
+                del hostup_dict[ip]
+        
         logging.info(
             f"Found {len(hostup_dict)} hosts that are up, but have no open ports"
         )
         up_file: str = "/tmp/up.txt"
         with open(up_file, "w") as f:
             for ip, reason in hostup_dict.items():
-                print(f"UP:{ip}:{reason}")
+                logging.info(f"UP:{ip}:{reason}")
                 f.write(f"{ip}\n")
             logging.info(f"Wrote list of host without open ports to {up_file}")
+
+    if not final_state:
+        logging.error("Did not find any open ports!")
+        return
 
     if args.rescan:
         logging.info("nmap command to re-scan all non service scanned ports")
         logging.info(generate_nmap_scan_command(final_state))
         return
-
   
     if args.service:
         logging.info("Filtering non-service scanned ports")
