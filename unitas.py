@@ -835,11 +835,7 @@ class NmapMerger(ScanMerger):
             for p in nhost.ports:
                 ports.append(p)
             # clear all child elements
-            # add all of them
-            hostnames = host.find("hostnames")
-            for p in nhost.hostnames:
-                hostnames.append(p)
-
+            # add all of thet
             hostnames = host.find("hostnames")
             for p in nhost.hostnames:
                 hostnames.append(p)            
