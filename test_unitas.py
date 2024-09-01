@@ -8,6 +8,7 @@ from unitas import (
     PortDetails,
     HostScanData,
     merge_states,
+    NmapHost,
     NmapParser,
     NessusParser,
     search_port_or_service,
@@ -239,7 +240,7 @@ class TestNessusParser(unittest.TestCase):
                 "port": "161",
                 "protocol": "udp",
                 "state": "TBD",
-                "service": "snmp",
+                "service": "snmp?",
                 "comment": "",
             },
         )
@@ -295,6 +296,133 @@ class TestNessusParser(unittest.TestCase):
         # test a xml with missing attributes
         thing = parser._parse_port_item(self._get_element(b"<test>test</test>\n"))
         self.assertIsNone(thing)
+
+
+class TestNmapHost(unittest.TestCase):
+
+    def setUp(self):
+        self.host_element = ET.Element("host")
+        self.nmap_host = NmapHost("192.168.1.1", self.host_element)
+
+    def create_port_element(
+        self, protocol, portid, state, service_name=None, product=None
+    ):
+        port = ET.Element("port", attrib={"protocol": protocol, "portid": portid})
+        ET.SubElement(port, "state", attrib={"state": state})
+        if service_name:
+            service = ET.SubElement(port, "service", attrib={"name": service_name})
+            if product:
+                service.set("product", product)
+        return port
+
+    def create_script_element(self, script_id, output):
+        script = ET.Element("script", attrib={"id": script_id, "output": output})
+        return script
+
+    def test_add_port_new(self):
+        port = self.create_port_element("tcp", "80", "open", "http", "Apache")
+        self.nmap_host.add_port(port)
+        self.assertEqual(len(self.nmap_host.ports), 1)
+        self.assertIn("tcp_80_open", self.nmap_host.ports)
+
+    def test_add_port_existing_merge(self):
+        port1 = self.create_port_element("tcp", "80", "open", "http", "Apache")
+        port2 = self.create_port_element("tcp", "80", "open", "http", "Nginx")
+        self.nmap_host.add_port(port1)
+        self.nmap_host.add_port(port2)
+        self.assertEqual(len(self.nmap_host.ports), 1)
+        merged_port = self.nmap_host.ports["tcp_80_open"]
+        self.assertEqual(merged_port.find("service").get("product"), "Apache")
+
+    def test_add_port_different_state(self):
+        port1 = self.create_port_element("tcp", "80", "open")
+        port2 = self.create_port_element("tcp", "80", "closed")
+        self.nmap_host.add_port(port1)
+        self.nmap_host.add_port(port2)
+        self.assertEqual(len(self.nmap_host.ports), 2)
+        self.assertIn("tcp_80_open", self.nmap_host.ports)
+        self.assertIn("tcp_80_closed", self.nmap_host.ports)
+
+    def test_add_port_with_script(self):
+        port = self.create_port_element("tcp", "443", "open", "https")
+        script = self.create_script_element("ssl-cert", "Output of SSL cert script")
+        port.append(script)
+        self.nmap_host.add_port(port)
+        self.assertIn("tcp_443_open", self.nmap_host.ports)
+        self.assertEqual(len(self.nmap_host.ports["tcp_443_open"].findall("script")), 1)
+
+    def test_add_port_merge_scripts(self):
+        port1 = self.create_port_element("tcp", "443", "open", "https")
+        script1 = self.create_script_element("ssl-cert", "Output 1")
+        port1.append(script1)
+
+        port2 = self.create_port_element("tcp", "443", "open", "https")
+        script2 = self.create_script_element("ssl-cert", "Output 2")
+        script3 = self.create_script_element("http-title", "Title")
+        port2.append(script2)
+        port2.append(script3)
+
+        self.nmap_host.add_port(port1)
+        self.nmap_host.add_port(port2)
+
+        merged_port = self.nmap_host.ports["tcp_443_open"]
+        self.assertEqual(len(merged_port.findall("script")), 2)
+        self.assertEqual(
+            merged_port.find(".//script[@id='ssl-cert']").get("output"), "Output 1"
+        )
+
+    def test_add_hostscript_new(self):
+        script = self.create_script_element("ssh-hostkey", "SSH host key")
+        self.nmap_host.add_hostscript(script)
+        self.assertEqual(len(self.nmap_host.hostscripts), 1)
+        self.assertIn("ssh-hostkey", self.nmap_host.hostscripts)
+
+    def test_add_hostscript_existing_merge(self):
+        script1 = self.create_script_element("ssh-hostkey", "SSH host key 1")
+        script2 = self.create_script_element("ssh-hostkey", "SSH host key 2")
+        self.nmap_host.add_hostscript(script1)
+        self.nmap_host.add_hostscript(script2)
+        self.assertEqual(len(self.nmap_host.hostscripts), 1)
+        self.assertEqual(
+            self.nmap_host.hostscripts["ssh-hostkey"].get("output"), "SSH host key 2"
+        )
+
+    def test_add_hostscript_with_table(self):
+        script = ET.Element(
+            "script", attrib={"id": "test-script", "output": "Test output"}
+        )
+        table = ET.SubElement(script, "table", attrib={"key": "test-table"})
+        ET.SubElement(table, "elem", attrib={"key": "elem1"}).text = "Value1"
+        self.nmap_host.add_hostscript(script)
+        self.assertIn("test-script", self.nmap_host.hostscripts)
+        self.assertEqual(
+            len(self.nmap_host.hostscripts["test-script"].findall(".//elem")), 1
+        )
+
+    def test_add_hostscript_merge_tables(self):
+        script1 = ET.Element(
+            "script", attrib={"id": "test-script", "output": "Test output 1"}
+        )
+        table1 = ET.SubElement(script1, "table", attrib={"key": "test-table"})
+        ET.SubElement(table1, "elem", attrib={"key": "elem1"}).text = "Value1"
+
+        script2 = ET.Element(
+            "script", attrib={"id": "test-script", "output": "Test output 2"}
+        )
+        table2 = ET.SubElement(script2, "table", attrib={"key": "test-table"})
+        ET.SubElement(table2, "elem", attrib={"key": "elem1"}).text = "Value1-updated"
+        ET.SubElement(table2, "elem", attrib={"key": "elem2"}).text = "Value2"
+
+        self.nmap_host.add_hostscript(script1)
+        self.nmap_host.add_hostscript(script2)
+
+        merged_script = self.nmap_host.hostscripts["test-script"]
+        self.assertEqual(merged_script.get("output"), "Test output 2")
+        self.assertEqual(len(merged_script.findall(".//elem")), 2)
+        self.assertEqual(
+            merged_script.find(".//elem[@key='elem1']").text, "Value1-updated"
+        )
+        self.assertEqual(merged_script.find(".//elem[@key='elem2']").text, "Value2")
 
 
 class TestPortDetails(unittest.TestCase):

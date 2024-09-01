@@ -15,15 +15,17 @@ from abc import ABC, abstractmethod
 from functools import lru_cache
 import time
 import requests
-import urllib3 
+from copy import deepcopy
+import urllib3
 import configparser
 import shutil
 
 
 __version__ = "1.0.0"
 
+
 class UnitasConfig:
-    def __init__(self, config_file: str='~/.unitas'):
+    def __init__(self, config_file: str = "~/.unitas"):
         self.config_file = os.path.expanduser(config_file)
         self.config = configparser.ConfigParser()
 
@@ -34,24 +36,25 @@ class UnitasConfig:
             self.config.read(self.config_file)
 
     def create_template_config(self):
-        self.config['nessus'] = {
-            'secret_key': '',
-            'access_key': '',
-            'url': 'https://127.0.0.1:8834'
+        self.config["nessus"] = {
+            "secret_key": "",
+            "access_key": "",
+            "url": "https://127.0.0.1:8834",
         }
-        with open(self.config_file, 'w') as file:
+        with open(self.config_file, "w") as file:
             self.config.write(file)
-        logging.info(f"Template config file created at {self.config_file}. Please update the settings.")
+        logging.info(
+            f"Template config file created at {self.config_file}. Please update the settings."
+        )
 
     def get_secret_key(self):
-        return self.config.get('nessus', 'secret_key')
+        return self.config.get("nessus", "secret_key")
 
     def get_access_key(self):
-        return self.config.get('nessus', 'access_key')
+        return self.config.get("nessus", "access_key")
 
     def get_url(self):
-        return self.config.get('nessus', 'url')
-
+        return self.config.get("nessus", "url")
 
 
 class PortDetails:
@@ -129,7 +132,7 @@ class PortDetails:
 
     SERVICE_MAPPING: Dict[str, str] = {
         "www": "http",
-        "microsoft-ds": "smb",        
+        "microsoft-ds": "smb",
         "cifs": "smb",
         "ms-wbt-server": "rdp",
     }
@@ -176,6 +179,7 @@ class ThreadSafeServiceLookup:
 service_lookup = ThreadSafeServiceLookup()
 hostup_dict = defaultdict(dict)
 config = UnitasConfig()
+
 
 class HostScanData:
     def __init__(self, ip: str):
@@ -408,7 +412,10 @@ class NessusParser(ScanParser):
             host = HostScanData(ip)
             if hostname:
                 host.set_hostname(hostname)
-            plugin_found = self._parse_service_detection(block, host) > 0 or self._parse_port_scanners(block, host) > 0            
+            plugin_found = (
+                self._parse_service_detection(block, host) > 0
+                or self._parse_port_scanners(block, host) > 0
+            )
             # the idea here is if the host has some version or port scan, it must be up
             # sofar i have not seen a nessus file w
             if plugin_found and len(host.ports) == 0:
@@ -449,7 +456,12 @@ class NessusParser(ScanParser):
     def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> int:
         counter = 0
         # xml module has only limited xpath support
-        for item in [b for b in block.findall(".//ReportItem") if b.attrib.get("pluginFamily", "Port Scanner") not in ["Port Scanner", "Settings"]]:
+        for item in [
+            b
+            for b in block.findall(".//ReportItem")
+            if b.attrib.get("pluginFamily", "Port Scanner")
+            not in ["Port Scanner", "Settings"]
+        ]:
             counter += 1
             host.add_port_details(self._parse_service_item(item))
         return counter
@@ -471,13 +483,12 @@ class NessusParser(ScanParser):
         state: str = "TBD"
         return PortDetails(port=port, service=service, state=state, protocol=protocol)
 
-    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> int:                
+    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> int:
         counter = 0
-        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):                        
+        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
             counter += 1
-            host.add_port_details(self._parse_port_item(item))        
+            host.add_port_details(self._parse_port_item(item))
         return counter
-            
 
 
 class NmapParser(ScanParser):
@@ -583,12 +594,17 @@ class NmapParser(ScanParser):
             if port.find("state[@state='open']") is not None:
                 h.add_port_details(self._parse_port_item(port))
 
+
 class NessusExporter:
 
     report_name = "Merged Report"
 
     def __init__(self):
-        access_key, secret_key, url = config.get_access_key(), config.get_secret_key(), config.get_url()
+        access_key, secret_key, url = (
+            config.get_access_key(),
+            config.get_secret_key(),
+            config.get_url(),
+        )
         if not access_key or not secret_key:
             raise ValueError("Secret or access key was empty!")
         self.access_key = access_key
@@ -596,94 +612,113 @@ class NessusExporter:
         self.url = url
 
         self.ses = requests.Session()
-        self.ses.headers.update({'X-ApiKeys': f'accessKey={self.access_key}; secretKey={self.secret_key}'})
-        self.ses.verify = False # yeah i know :D
+        self.ses.headers.update(
+            {"X-ApiKeys": f"accessKey={self.access_key}; secretKey={self.secret_key}"}
+        )
+        self.ses.verify = False  # yeah i know :D
 
-        def error_handler(r, *args, **kwargs):            
+        def error_handler(r, *args, **kwargs):
             if not r.ok:
                 logging.error(f"Problem with nessus API: {r.text}")
             r.raise_for_status()
 
-        self.ses.hooks = {
-            'response': error_handler
-        }
+        self.ses.hooks = {"response": error_handler}
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    
     def upload_scan(self, file_path: str, name: str):
-        for scan in  self._list_scans():
+        for scan in self._list_scans():
             # 2 is the trash folder
             if scan["name"] == NessusExporter.report_name and scan["folder_id"] != 2:
-                logging.info(f"Deleting scan {scan['id']}")                
+                logging.info(f"Deleting scan {scan['id']}")
                 self.ses.delete(f"{self.url}/scans/{scan['id']}")
-        self._upload_file(file_path)        
-        # 
-        
+        self._upload_file(file_path)
+        #
+
     def _upload_file(self, filename: str):
         if not os.path.isfile(filename):
             raise Exception("This file does not exist.")
         with open(filename, "rb") as file:
-            resp = self.ses.post(f"{self.url}/file/upload", files={"Filedata": file, "no_enc": "0"})
-            file_name = resp.json()['fileuploaded']
-            self.ses.post(f"http://127.0.0.1:1234/scans/import", json={"folder_id": 3, "file": file_name})
+            resp = self.ses.post(
+                f"{self.url}/file/upload", files={"Filedata": file, "no_enc": "0"}
+            )
+            file_name = resp.json()["fileuploaded"]
+            self.ses.post(
+                f"http://127.0.0.1:1234/scans/import",
+                json={"folder_id": 3, "file": file_name},
+            )
 
-    def _initiate_export(self, scan_id):        
+    def _initiate_export(self, scan_id):
         logging.info(f"Initiating export for scan ID: {scan_id} nessus format")
-        return self.ses.post(f"{self.url}/scans/{scan_id}/export", json={"format": "nessus", 'chapters': ''}).json()['file']
+        return self.ses.post(
+            f"{self.url}/scans/{scan_id}/export",
+            json={"format": "nessus", "chapters": ""},
+        ).json()["file"]
 
     def _check_export_status(self, scan_id, file_id):
-        logging.info(f"Checking export status for scan ID: {scan_id}, file ID: {file_id}")
+        logging.info(
+            f"Checking export status for scan ID: {scan_id}, file ID: {file_id}"
+        )
         while True:
-            status = self.ses.get(f'{self.url}/scans/{scan_id}/export/{file_id}/status').json()['status']
-            if status == 'ready':
+            status = self.ses.get(
+                f"{self.url}/scans/{scan_id}/export/{file_id}/status"
+            ).json()["status"]
+            if status == "ready":
                 logging.info(f"Export is ready for download for scan ID: {scan_id}")
                 break
             logging.debug("Export is not ready yet, waiting 5 seconds...")
             time.sleep(5)
 
-
     def _list_scans(self) -> List[Dict]:
         logging.info("Listing nessus scans")
-        scans = self.ses.get(f"{self.url}/scans").json()['scans']
+        scans = self.ses.get(f"{self.url}/scans").json()["scans"]
         export_scans = []
         for x in scans:
-            if x["status"] in ["cancled", "running"]: 
-                logging.warning(f"Skipping scan \"{x['name']}\" because status is {x['status']}")            
-            else: 
+            if x["status"] in ["cancled", "running"]:
+                logging.warning(
+                    f"Skipping scan \"{x['name']}\" because status is {x['status']}"
+                )
+            else:
                 export_scans.append(x)
         return export_scans
 
     def _download_export(self, scan: dict, file_id: str):
-        scan_id = scan['id']
-        scan_name = scan['name'].replace(' ', '_').replace('/', '_').replace('\\', '_')  # Sanitize filename
+        scan_id = scan["id"]
+        scan_name = (
+            scan["name"].replace(" ", "_").replace("/", "_").replace("\\", "_")
+        )  # Sanitize filename
         filename = f"{scan_name}.nessus"
         if os.path.exists(filename):
             logging.error(f"Export file {filename} already exists. Skipping download.")
             return
-        logging.info(f"Downloading export for scan ID: {scan_id}, Scan Name: {scan_name}")     
-        response = self.ses.get(f"{self.url}/scans/{scan_id}/export/{file_id}/download", stream=True)
+        logging.info(
+            f"Downloading export for scan ID: {scan_id}, Scan Name: {scan_name}"
+        )
+        response = self.ses.get(
+            f"{self.url}/scans/{scan_id}/export/{file_id}/download", stream=True
+        )
         response.raise_for_status()
-        with open(filename, 'wb') as f:
+        with open(filename, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         logging.info(f"Download completed successfully for scan {scan_name}")
 
-
     def export(self, target_dir: str):
         scans = self._list_scans()
 
-        if not scans: 
+        if not scans:
             logging.error("No scans found!")
             return
-        
+
         for scan in scans:
-            scan_id = scan['id']
-            scan_name = scan['name']
+            scan_id = scan["id"]
+            scan_name = scan["name"]
             if scan_name.lower() == "merged":
                 logging.info(f"Skipping export for scan named 'merged'")
                 continue
-            
-            sanitized_scan_name = scan_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+
+            sanitized_scan_name = (
+                scan_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+            )
             nessus_filename = f"{sanitized_scan_name}.nessus"
 
             if not os.path.exists(nessus_filename):
@@ -691,76 +726,153 @@ class NessusExporter:
                 self._check_export_status(scan_id, nessus_file_id)
                 self._download_export(scan, nessus_file_id)
             else:
-                logging.info(f"Skipping export for {nessus_filename} as it already exists.")
+                logging.info(
+                    f"Skipping export for {nessus_filename} as it already exists."
+                )
 
-class ScanMerger(ABC): 
+
+class ScanMerger(ABC):
     def __init__(self, directory: str, output_directory: str):
         self.directory = directory
-        self.output_directory = output_directory     
+        self.output_directory = output_directory
         self.output_file: str = None
-        self.filter: str = None   
+        self.filter: str = None
 
     def search(self, wildcard: str) -> List[str]:
         files = []
-        for file in glob.glob(os.path.join(self.directory, '**', wildcard), recursive=True):
-            if self.output_directory not in file and self.output_directory.split(".")[0] not in file:
+        for file in glob.glob(
+            os.path.join(self.directory, "**", wildcard), recursive=True
+        ):
+            if (
+                self.output_directory not in file
+                and self.output_directory.split(".")[0] not in file
+            ):
                 files.append(file)
             else:
-                logging.warning(f"Skipping file {file} to prevent merging a merged scan!")
+                logging.warning(
+                    f"Skipping file {file} to prevent merging a merged scan!"
+                )
         return files
 
     def parse(self):
         pass
-    
-class NmapHost: 
+
+
+class NmapHost:
 
     def __init__(self, ip: str, host: Element):
         self.ip = ip
         self.host: Element = host
         self.hostnames: List[Element] = []
-        self.ports: List[Element] = []
-        self.hostscripts: List[Element] = []
-        self.os_e: Element = None        
+        self.ports: Dict[str, ET.Element] = {}
+        self.hostscripts: Dict[str, ET.Element] = {}
+        self.os_e: Element = None
         self.reason: str = None
 
     def elements_equal(self, e1: Element, e2: Element):
-        if e1.tag != e2.tag: return False
-        if e1.text != e2.text: return False
-        if e1.tail != e2.tail: return False
-        if e1.attrib != e2.attrib: return False
-        if len(e1) != len(e2): return False
+        if e1.tag != e2.tag:
+            return False
+        if e1.text != e2.text:
+            return False
+        if e1.tail != e2.tail:
+            return False
+        if e1.attrib != e2.attrib:
+            return False
+        if len(e1) != len(e2):
+            return False
         return all(self.elements_equal(c1, c2) for c1, c2 in zip(e1, e2))
 
     def find_port(self, protocol: str, portid: str) -> Element:
         for p in self.ports:
-            if p.get('protocol') == protocol and p.get('portid') == portid:
+            if p.get("protocol") == protocol and p.get("portid") == portid:
                 return p
         return None
 
-    def add_port(self, port: Element):
-        p_old = self.find_port(port.get("protocol"), port.get("portid"))
-        if not p_old: 
-            self.ports.append(port)
-        elif len(ET.tostring(p_old)) < len(ET.tostring(port)):
-            self.ports.remove(p_old)
-            self.ports.append(port)
+    def add_port(self, port: ET.Element):
+        key = self._get_port_key(port)
+
+        if key in self.ports:
+            self._merge_port_info(self.ports[key], port)
+        else:
+            self.ports[key] = deepcopy(port)
+
+    def _get_port_key(self, port: ET.Element) -> str:
+        key = f"{port.get('protocol')}_{port.get('portid')}"
+        state = port.find("state")
+        if state is not None:
+            key += f"_{state.get('state')}"
+        return key
+
+    def _merge_port_info(self, existing_port: ET.Element, new_port: ET.Element):
+        # Merge service information
+        existing_service = existing_port.find("service")
+        new_service = new_port.find("service")
+        if existing_service is not None and new_service is not None:
+            self._merge_service_info(existing_service, new_service)
+        elif new_service is not None:
+            existing_port.append(deepcopy(new_service))
+
+        # Merge script results
+        existing_scripts = {
+            script.get("id"): script for script in existing_port.findall("script")
+        }
+        for new_script in new_port.findall("script"):
+            script_id = new_script.get("id")
+            if script_id not in existing_scripts:
+                existing_port.append(deepcopy(new_script))
+
+    def _merge_service_info(
+        self, existing_service: ET.Element, new_service: ET.Element
+    ):
+        for attr, value in new_service.attrib.items():
+            if attr not in existing_service.attrib or existing_service.get(attr) == "":
+                existing_service.set(attr, value)
 
     def add_hostname(self, hostname: Element):
         if not any(self.elements_equal(e, hostname) for e in self.hostnames):
             self.hostnames.append(hostname)
-    
-    def add_hostscript(self, hostscript: Element):
-        if not any(self.elements_equal(e, hostscript) for e in self.hostscripts):
-            self.hostscripts.append(hostscript)
 
+    def _merge_script_info(self, existing_script: ET.Element, new_script: ET.Element):
+        # Update output if it's different
+        if existing_script.get("output") != new_script.get("output"):
+            existing_script.set("output", new_script.get("output"))
+
+        # Merge or update table elements
+        existing_tables = {
+            table.get("key"): table for table in existing_script.findall("table")
+        }
+        for new_table in new_script.findall("table"):
+            table_key = new_table.get("key")
+            if table_key not in existing_tables:
+                existing_script.append(deepcopy(new_table))
+            else:
+                self._merge_table_info(existing_tables[table_key], new_table)
+
+    def _merge_table_info(self, existing_table: ET.Element, new_table: ET.Element):
+        existing_elems = {
+            elem.get("key"): elem for elem in existing_table.findall("elem")
+        }
+        for new_elem in new_table.findall("elem"):
+            elem_key = new_elem.get("key")
+            if elem_key not in existing_elems:
+                existing_table.append(deepcopy(new_elem))
+            elif existing_elems[elem_key].text != new_elem.text:
+                existing_elems[elem_key].text = new_elem.text
+
+    def add_hostscript(self, hostscript: ET.Element):
+        script_id = hostscript.get("id")
+        if script_id not in self.hostscripts:
+            self.hostscripts[script_id] = deepcopy(hostscript)
+        else:
+            self._merge_script_info(self.hostscripts[script_id], hostscript)
 
 
 class NmapMerger(ScanMerger):
 
-    def __init__(self, directory: str, output_directory: str):        
+    def __init__(self, directory: str, output_directory: str):
         super().__init__(directory, output_directory)
         self.output_file: str = "merged_nmap.xml"
-        self.filter: str = "*.xml"         
+        self.filter: str = "*.xml"
         self.template: str = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE nmaprun>
 <?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
@@ -781,138 +893,146 @@ class NmapMerger(ScanMerger):
         hosts: Dict[str, NmapHost] = {}
         for file_path in self.search(self.filter):
             logging.info(f"Trying to parse {file_path}")
-            try: 
+            try:
                 root = ET.parse(file_path)
-                for host in root.findall(".//host"):                    
+                for host in root.findall(".//host"):
                     status = host.find(".//status")
                     if status is not None and status.attrib.get("state") == "up":
-                        address = host.find(".//address")                        
+                        address = host.find(".//address")
                         if address is not None:  # explicit None check is needed
-                            host_ip: str = address.attrib.get("addr", "")                            
+                            host_ip: str = address.attrib.get("addr", "")
                             if not host_ip in hosts:
                                 nhost = NmapHost(host_ip, host)
                                 hosts[host_ip] = nhost
-                            else: 
+                            else:
                                 nhost = hosts[host_ip]
 
                             nhost.reason = status.attrib.get("reason", "user-set")
                             ports = host.find("ports")
-                            if  ports is not None:                                                                 
-                                for x in ports.findall("extraports"): 
+                            if ports is not None:
+                                for x in ports.findall("extraports"):
                                     ports.remove(x)
 
-                                for port in ports.findall("port[state]"): 
-                                    state = port.find("state")                         
-                                    if port.attrib.get("protocol", "udp") == "udp" and state.attrib.get("state", "open|filtered") == "open|filtered" and state.attrib.get("reason", "no-response") == "no-response":
+                                for port in ports.findall("port[state]"):
+                                    state = port.find("state")
+                                    if (
+                                        port.attrib.get("protocol", "udp") == "udp"
+                                        and state.attrib.get("state", "open|filtered")
+                                        == "open|filtered"
+                                        and state.attrib.get("reason", "no-response")
+                                        == "no-response"
+                                    ):
                                         pass
                                     else:
                                         nhost.add_port(port)
                                     ports.remove(port)
-                            
+
                             hostnames = host.find("hostnames")
-                            if hostnames is not None: 
+                            if hostnames is not None:
                                 for x in hostnames:
                                     hostnames.remove(x)
-                                    nhost.add_hostname(x)  
+                                    nhost.add_hostname(x)
 
                             for x in host.findall(".//hostscript"):
                                 host.remove(x)
                                 nhost.add_hostscript(x)
-                                
 
-                            os_e = host.find(".//os")                       
-                            if os_e is not None: 
+                            os_e = host.find(".//os")
+                            if os_e is not None:
                                 host.remove(os_e)
                                 nhost.os_e = os_e
             except ParseError as e:
                 logging.error("Failed to parse nmap xml")
                 continue
         self._render_template(hosts)
-            
+
     def _render_template(self, hosts: Dict[str, NmapHost]) -> str:
         payload: str = ""
         for ip, nhost in hosts.items():
             host = nhost.host
             ports = host.find("ports")
-            
+
             # odd case where the host is up, but not port was found
             if nhost.reason == "user-set" and len(nhost.ports) == 0:
                 continue
 
             # if the first scan had no ports, we need to add the element again
-            if ports is None: 
+            if ports is None:
 
                 ports = ET.fromstring("<ports></ports>")
                 host.append(ports)
 
-            for p in nhost.ports:
+            for _, p in nhost.ports.items():
                 ports.append(p)
             # clear all child elements
-            # add all of thet
+            # add all of them
             hostnames = host.find("hostnames")
             for p in nhost.hostnames:
-                hostnames.append(p)            
+                hostnames.append(p)
 
             hostscripts = host.find("hostscripts")
             if not hostscripts:
                 hostscripts = ET.fromstring("<hostscripts></hostscripts>")
                 host.append(hostscripts)
-            for p in nhost.hostscripts:
+            for _, p in nhost.hostscripts.items():
                 hostscripts.append(p)
 
             payload += ET.tostring(host).decode()
         data = self.template.replace("{{host}}", payload)
-        
+
         if not os.path.exists(self.output_directory):
             os.makedirs(self.output_directory)
-        
+
         output_file = os.path.join(self.output_directory, self.output_file)
-        
+
         with open(output_file, "w") as f:
             f.write(data)
-        
+
         logging.info(f"Saving merged scan to {output_file}")
-        if shutil.which("xsltproc") is None: 
-            logging.error("xsltproc is not installed and nmap html report will not generated!")                        
-        else: 
+        if shutil.which("xsltproc") is None:
+            logging.error(
+                "xsltproc is not installed and nmap html report will not generated!"
+            )
+        else:
             os.system(f"xsltproc {output_file} -o {output_file}.html")
 
         return output_file
-        
 
     def save_report(self) -> str:
         pass
         # TBD add code to convert HTML
 
-    
+
 class NessusMerger(ScanMerger):
 
-    def __init__(self, directory: str, output_directory: str):        
-        super().__init__(directory, output_directory)        
+    def __init__(self, directory: str, output_directory: str):
+        super().__init__(directory, output_directory)
         self.tree: ET.ElementTree = None
-        self.root: ET.Element = None        
+        self.root: ET.Element = None
         self.output_file: str = "merged_report.nessus"
         self.filter: str = "*.nessus"
 
-    def parse(self):        
-        first_file_parsed = True        
-        for file_path in self.search(self.filter):             
+    def parse(self):
+        first_file_parsed = True
+        for file_path in self.search(self.filter):
             logging.info(f"Parsing - {file_path}")
             try:
                 if first_file_parsed:
                     self.tree = ET.parse(file_path)
-                    self.report = self.tree.find('Report')
-                    self.report.attrib['name'] = NessusExporter.report_name
+                    self.report = self.tree.find("Report")
+                    self.report.attrib["name"] = NessusExporter.report_name
                     first_file_parsed = False
-                else: 
-                    tree = ET.parse(file_path)                
+                else:
+                    tree = ET.parse(file_path)
                     self._merge_hosts(tree)
             except ParseError:
-                logging.error("Failed to parse")            
+                logging.error("Failed to parse")
 
     def _merge_hosts(self, tree):
-        for host in tree.findall('.//ReportHost'):
-            existing_host = self.report.find(f".//ReportHost[@name='{host.attrib['name']}']")
+        for host in tree.findall(".//ReportHost"):
+            existing_host = self.report.find(
+                f".//ReportHost[@name='{host.attrib['name']}']"
+            )
             if not existing_host:
                 logging.debug(f"Adding host: {host.attrib['name']}")
                 self.report.append(host)
@@ -920,16 +1040,20 @@ class NessusMerger(ScanMerger):
                 self._merge_report_items(host, existing_host)
 
     def _merge_report_items(self, host, existing_host):
-        for item in host.findall('ReportItem'):
-            if not existing_host.find(f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"):
-                logging.debug(f"Adding finding: {item.attrib['port']}:{item.attrib['pluginID']}")
+        for item in host.findall("ReportItem"):
+            if not existing_host.find(
+                f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"
+            ):
+                logging.debug(
+                    f"Adding finding: {item.attrib['port']}:{item.attrib['pluginID']}"
+                )
                 existing_host.append(item)
 
-    def save_report(self) -> str: 
+    def save_report(self) -> str:
         if not os.path.exists(self.output_directory):
             os.makedirs(self.output_directory)
         output_file = os.path.join(self.output_directory, self.output_file)
-        if self.tree is None: 
+        if self.tree is None:
             logging.error("Generated Nessus was empty")
             return
         self.tree.write(output_file, encoding="utf-8", xml_declaration=True)
@@ -1099,7 +1223,7 @@ def filter_uncertain_services(
 
 def main() -> None:
     # TBD: add format flag
-    # TBD: remove up host from stdin    
+    # TBD: remove up host from stdin
     parser = argparse.ArgumentParser(
         description=f"Unitas v{__version__}: A network scan parser and analyzer",
         epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
@@ -1186,25 +1310,26 @@ def main() -> None:
         logging.error(f"Source folder {folder} was not found!")
         return
 
-    if args.export: 
+    if args.export:
         logging.info(f"Starting nessus export to {os.path.abspath(args.scan_folder)}")
-        NessusExporter().export(args.scan_folder)        
+        NessusExporter().export(args.scan_folder)
         return
 
-    if args.merge: 
-        logging.info("Starting to merge scans!")        
+    if args.merge:
+        logging.info("Starting to merge scans!")
 
         merger = NmapMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
-        merger.parse()        
+        merger.parse()
 
-        merger = NessusMerger(args.scan_folder, os.path.join(args.scan_folder, "merged"))
+        merger = NessusMerger(
+            args.scan_folder, os.path.join(args.scan_folder, "merged")
+        )
         merger.parse()
         merger.save_report()
         # upload does not work on Nessus pro. because tenable disabled API support. For manager only :-/
-        #logging.info("Trying to upload the merged scan!")
-        #NessusExporter().upload_scan(file, "merged")
+        # logging.info("Trying to upload the merged scan!")
+        # NessusExporter().upload_scan(file, "merged")
         return
-
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
         args.scan_folder
@@ -1235,7 +1360,7 @@ def main() -> None:
         for ip in final_state.keys():
             if ip in hostup_dict:
                 del hostup_dict[ip]
-        
+
         logging.info(
             f"Found {len(hostup_dict)} hosts that are up, but have no open ports"
         )
@@ -1254,7 +1379,7 @@ def main() -> None:
         logging.info("nmap command to re-scan all non service scanned ports")
         logging.info(generate_nmap_scan_command(final_state))
         return
-  
+
     if args.service:
         logging.info("Filtering non-service scanned ports")
         final_state = filter_uncertain_services(final_state)
