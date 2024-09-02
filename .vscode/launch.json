@@ -19,7 +19,7 @@
             "console": "integratedTerminal",
             "args": [
                 "-v",
-                "test"
+                "tests"
             ]
         },
         {
@@ -31,7 +31,7 @@
             "args": [
                 "-v",
                 "--update",
-                "test"
+                "tests"
             ]
         },
         {
@@ -45,7 +45,7 @@
                 "--url",
                 "--search",
                 "443",
-                "test"
+                "tests"
             ]
         },
         {
@@ -57,7 +57,7 @@
             "args": [
                 "-v",
                 "--service",
-                "test"
+                "tests"
             ]
         },
         {
@@ -69,7 +69,7 @@
             "args": [
                 "-v",
                 "--rescan",
-                "test"
+                "tests"
             ]
         },
         {
@@ -81,7 +81,7 @@
             "args": [
                 "-e",
                 "--export",
-                "test"
+                "tests"
             ]
         },
         {
@@ -93,7 +93,7 @@
             "args": [
                 "-v",
                 "--merge",
-                "test"
+                "tests"
             ]
         }
     ]
