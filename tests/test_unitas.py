@@ -1,12 +1,10 @@
+# pylint: skip-file
 import unittest
-from unittest.mock import create_autospec, patch
 import os
-from xml.etree.ElementTree import Element
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from unitas import (
     PortDetails,
     HostScanData,

@@ -8,7 +8,7 @@
             "name": "Tests",
             "type": "debugpy",
             "request": "launch",
-            "program": "test_unitas.py",
+            "program": "tests/test_unitas.py",
             "console": "integratedTerminal"
         },
         {

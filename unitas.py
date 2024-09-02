@@ -1,8 +1,10 @@
+#!/bin/python
+# pylint: disable=fixme, line-too-long, logging-fstring-interpolation, missing-function-docstring, missing-class-docstring
 import glob
 import threading
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError, Element
-from typing import Dict, List, Optional, Tuple, Any, Type
+from typing import Dict, List, Optional, Tuple, Any, Set
 import os
 import concurrent.futures
 import argparse
@@ -12,13 +14,18 @@ from ipaddress import ip_address
 import logging
 from collections import defaultdict
 from abc import ABC, abstractmethod
-from functools import lru_cache
 import time
-import requests
-from copy import deepcopy
-import urllib3
 import configparser
 import shutil
+from copy import deepcopy
+
+try:
+    import requests
+    import urllib3
+    REQUESTS_INSTALLED = True
+except ImportError:
+    REQUESTS_INSTALLED = False
+
 
 
 __version__ = "1.0.0"
@@ -225,23 +232,6 @@ class HostScanData:
     def get_sorted_ports(self) -> List[PortDetails]:
         return sorted(self.ports, key=lambda p: (p.protocol, int(p.port)))
 
-    def merge(self, other: "HostScanData") -> List[PortDetails]:
-        if self.ip != other.ip:
-            raise ValueError("Cannot merge hosts with different IPs")
-        self.hostname = self.hostname or other.hostname
-        existing_ports = {(port.port, port.protocol): port for port in self.ports}
-        new_ports = []
-        for port in other.ports:
-            key = (port.port, port.protocol)
-            if key not in existing_ports:
-                self.ports.append(port)
-                new_ports.append(port)
-            elif not existing_ports[key].service and port.service:
-                existing_ports[key].service = port.service
-            elif self.overwrite_service(existing_ports[key].service, port.service):
-                existing_ports[key].service = port.service
-        return new_ports
-
     def __str__(self) -> str:
         ports_str = ", ".join(str(port) for port in self.ports)
         return f"{self.ip} ({self.hostname}): {ports_str}"
@@ -283,7 +273,7 @@ class Convert(ABC):
     def sort_global_state_by_ip(
         global_state: Dict[str, HostScanData]
     ) -> Dict[str, HostScanData]:
-        sorted_ips = sorted(global_state.keys(), key=lambda ip: ip_address(ip))
+        sorted_ips = sorted(global_state.keys(), key=ip_address)
         return {ip: global_state[ip] for ip in sorted_ips}
 
 
@@ -370,17 +360,17 @@ class ScanParser(ABC):
         pass
 
     @classmethod
-    def load_file(cls, dir: str) -> List["ScanParser"]:
+    def load_file(cls, directory: str) -> List["ScanParser"]:
         files = []
         for ext in cls.get_extensions():
             logging.debug(
-                f'Looking in folder "{dir}" for "{ext}" files for parser {cls.__name__}'
+                f'Looking in folder "{directory}" for "{ext}" files for parser {cls.__name__}'
             )
-            for f in glob.glob(f"{dir}/**/*.{ext}", recursive=True):
+            for f in glob.glob(f"{directory}/**/*.{ext}", recursive=True):
                 logging.debug(f"Adding file {f} for parser {cls.__name__}")
                 try:
                     files.append(cls(f))
-                except ParseError as e:
+                except ParseError:
                     logging.error(f"Could not load XML from file {f}")
         return files
 
@@ -636,14 +626,14 @@ class NessusExporter:
 
     def _upload_file(self, filename: str):
         if not os.path.isfile(filename):
-            raise Exception("This file does not exist.")
+            raise ValueError("This file does not exist.")
         with open(filename, "rb") as file:
             resp = self.ses.post(
                 f"{self.url}/file/upload", files={"Filedata": file, "no_enc": "0"}
             )
             file_name = resp.json()["fileuploaded"]
             self.ses.post(
-                f"http://127.0.0.1:1234/scans/import",
+                "http://127.0.0.1:1234/scans/import",
                 json={"folder_id": 3, "file": file_name},
             )
 
@@ -683,12 +673,12 @@ class NessusExporter:
                 export_scans.append(x)
         return export_scans
 
-    def _download_export(self, scan: dict, file_id: str):
+    def _download_export(self, scan: dict, file_id: str, target_dir: str):
         scan_id = scan["id"]
         scan_name = (
             scan["name"].replace(" ", "_").replace("/", "_").replace("\\", "_")
         )  # Sanitize filename
-        filename = f"{scan_name}.nessus"
+        filename = os.path.join(target_dir, f"{scan_name}.nessus")
         if os.path.exists(filename):
             logging.error(f"Export file {filename} already exists. Skipping download.")
             return
@@ -715,7 +705,7 @@ class NessusExporter:
             scan_id = scan["id"]
             scan_name = scan["name"]
             if scan_name.lower() == "merged":
-                logging.info(f"Skipping export for scan named 'merged'")
+                logging.info("Skipping export for scan named 'merged'")
                 continue
 
             sanitized_scan_name = (
@@ -726,7 +716,7 @@ class NessusExporter:
             if not os.path.exists(nessus_filename):
                 nessus_file_id = self._initiate_export(scan_id)
                 self._check_export_status(scan_id, nessus_file_id)
-                self._download_export(scan, nessus_file_id)
+                self._download_export(scan, nessus_file_id, target_dir)
             else:
                 logging.info(
                     f"Skipping export for {nessus_filename} as it already exists."
@@ -943,7 +933,7 @@ class NmapMerger(ScanMerger):
                             if os_e is not None:
                                 host.remove(os_e)
                                 nhost.os_e = os_e
-            except ParseError as e:
+            except ParseError:
                 logging.error("Failed to parse nmap xml")
                 continue
         self._render_template(hosts)
@@ -987,7 +977,7 @@ class NmapMerger(ScanMerger):
 
         output_file = os.path.join(self.output_directory, self.output_file)
 
-        with open(output_file, "w") as f:
+        with open(output_file, "w", encoding="utf-8") as f:
             f.write(data)
 
         logging.info(f"Saving merged scan to {output_file}")
@@ -1095,7 +1085,7 @@ def setup_logging(verbose: bool) -> None:
 
 def load_markdown_state(filename: str) -> Dict[str, HostScanData]:
     try:
-        with open(filename, "r") as f:
+        with open(filename, "r", encoding="utf-8") as f:
             content = f.read()
         # Strip empty lines
         content = "\n".join(line for line in content.split("\n") if line.strip())
@@ -1173,7 +1163,7 @@ def parse_files_concurrently(
         for future in concurrent.futures.as_completed(future_to_parser):
             parser = future_to_parser[future]
             try:
-                file_path, scan_results = future.result()
+                _, scan_results = future.result()
                 global_state = merge_states(global_state, scan_results)
 
             except Exception as exc:
@@ -1182,10 +1172,10 @@ def parse_files_concurrently(
 
 
 def generate_nmap_scan_command(global_state: Dict[str, HostScanData]) -> str:
-    scan_types: set[str] = set()
-    tcp_ports: set[str] = set()
-    udp_ports: set[str] = set()
-    targets: set[str] = set()
+    scan_types: Set[str] = set()
+    tcp_ports: Set[str] = set()
+    udp_ports: Set[str] = set()
+    targets: Set[str] = set()
     for ip, host_data in global_state.items():
         for port in host_data.ports:
             if "?" in port.service:
@@ -1225,7 +1215,9 @@ def filter_uncertain_services(
 
 def main() -> None:
     # TBD: add format flag
+    # TBD: add cool ascii banner
     # TBD: remove up host from stdin
+    # TBD: add project setup
     parser = argparse.ArgumentParser(
         description=f"Unitas v{__version__}: A network scan parser and analyzer",
         epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
@@ -1313,6 +1305,9 @@ def main() -> None:
         return
 
     if args.export:
+        if not REQUESTS_INSTALLED:
+            logging.error("requests was not installed, please install it via pip to use the exporter!")
+            return
         logging.info(f"Starting nessus export to {os.path.abspath(args.scan_folder)}")
         NessusExporter().export(args.scan_folder)
         return
@@ -1367,7 +1362,7 @@ def main() -> None:
             f"Found {len(hostup_dict)} hosts that are up, but have no open ports"
         )
         up_file: str = "/tmp/up.txt"
-        with open(up_file, "w") as f:
+        with open(up_file, "w", encoding="utf-8") as f:
             for ip, reason in hostup_dict.items():
                 logging.info(f"UP:{ip}:{reason}")
                 f.write(f"{ip}\n")
@@ -1402,7 +1397,7 @@ def main() -> None:
         md_content = md_converter.convert(True)
 
         logging.info("Updated state saved to state.md")
-        with open("state.md", "w") as f:
+        with open("state.md", "w", encoding="utf-8") as f:
             f.write(md_content)
 
         logging.info("Scan Results (Markdown):")
