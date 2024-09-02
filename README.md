@@ -81,7 +81,6 @@ cat updated_scan_results.md | python unitas.py -u
 
 This feature ensures that your comments and notes are retained while the table is updated with the latest scan results.
 
-
 ### Other Examples
 
 Search for specific ports:
