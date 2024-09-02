@@ -16,15 +16,9 @@ Unitas is a powerful network scan parser and analyzer tool designed to simplify 
 
 ## Installation
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/unitas.git
-   ```
-
-2. Navigate to the project directory:
-   ```
-   cd unitas
-   ```
+```
+pip install git+https://github.com/f0rw4rd/unitas@v1.0.0
+```
 
 ## Usage
 
