@@ -18,6 +18,7 @@ import time
 import configparser
 import shutil
 from copy import deepcopy
+from importlib.metadata import version, PackageNotFoundError
 
 try:
     import requests
@@ -26,9 +27,10 @@ try:
 except ImportError:
     REQUESTS_INSTALLED = False
 
-
-__version__ = "1.0.0"
-
+try:
+    __version__ = version("unitas")
+except PackageNotFoundError:
+    __version__ = "dev-version"
 
 class UnitasConfig:
     def __init__(self, config_file: str = "~/.unitas"):
