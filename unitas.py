@@ -27,7 +27,6 @@ except ImportError:
     REQUESTS_INSTALLED = False
 
 
-
 __version__ = "1.0.0"
 
 
@@ -1213,10 +1212,15 @@ def filter_uncertain_services(
     return certain_services
 
 
-def main() -> None:
-    # TBD: add format flag
-    # TBD: add cool ascii banner
-    # TBD: remove up host from stdin
+BANNER = """              __________               
+____  ___________(_)_  /______ ________
+_  / / /_  __ \_  /_  __/  __ `/_  ___/
+/ /_/ /_  / / /  / / /_ / /_/ /_(__  ) 
+\__,_/ /_/ /_//_/  \__/ \__,_/ /____/  
+                                       """
+
+
+def main() -> None:        
     # TBD: add project setup
     parser = argparse.ArgumentParser(
         description=f"Unitas v{__version__}: A network scan parser and analyzer",
@@ -1298,6 +1302,7 @@ def main() -> None:
     setup_logging(args.verbose)
 
     logging.info(f"Unitas v{__version__} starting up.")
+    logging.info(BANNER)
 
     if not os.path.exists(args.scan_folder):
         folder = os.path.abspath(args.scan_folder)

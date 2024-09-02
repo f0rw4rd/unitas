@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unitas"
+version = "1.0.0"
+authors = [
+    { name = "f0rw4rd", email = "f0rw4rd@localhost.local" },
+]
+description = "unitas - A tool to help with nessus and nmap scans"
+requires-python = ">=3.7"
+dependencies = [
+    "requests",
+]
+
+[project.scripts]
+unitas = "unitas:main"
