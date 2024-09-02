@@ -668,9 +668,11 @@ class NessusExporter:
             logging.debug("Export is not ready yet, waiting 5 seconds...")
             time.sleep(5)
 
-    def _list_scans(self) -> List[Dict]:
+    def _list_scans(self) -> List[Dict]:        
         logging.info("Listing nessus scans")
         scans = self.ses.get(f"{self.url}/scans").json()["scans"]
+        if not scans:
+            return []
         export_scans = []
         for x in scans:
             if x["status"] in ["cancled", "running"]:
