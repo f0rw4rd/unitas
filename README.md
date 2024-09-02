@@ -17,7 +17,7 @@ Unitas is a powerful network scan parser and analyzer tool designed to simplify 
 ## Installation
 
 ```
-pip install git+https://github.com/f0rw4rd/unitas@v1.0.0
+pip install git+https://github.com/f0rw4rd/unitas@latest
 ```
 
 ## Usage
