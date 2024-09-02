@@ -4,6 +4,9 @@ import os
 from xml.etree.ElementTree import Element
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from unitas import (
     PortDetails,
     HostScanData,
@@ -19,7 +22,7 @@ from unitas import (
 class TestNmapParser(unittest.TestCase):
     def setUp(self):
         self.test_files_dir = os.path.join(
-            os.path.dirname(__file__), "tests", "nmap_files"
+            os.path.dirname(__file__),  "nmap_files"
         )
 
     def _get_path(self, file):
@@ -175,7 +178,7 @@ class TestNmapParser(unittest.TestCase):
 class TestNessusParser(unittest.TestCase):
     def setUp(self):
         self.test_files_dir = os.path.join(
-            os.path.dirname(__file__), "tests", "nessus_files"
+            os.path.dirname(__file__),  "nessus_files"
         )
 
     def _get_path(self, file):
