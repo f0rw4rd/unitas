@@ -1,5 +1,6 @@
 # ignore the test files, just local scans
 test/
+tests/merged/
 .state.pkl
 state.md
 
