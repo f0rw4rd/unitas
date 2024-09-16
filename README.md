@@ -108,6 +108,18 @@ python unitas.py /path/to/scan/folder -m
 
 Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. If the configuration file doesn't exist, Unitas will create a template for you. Make sure to update the `secret_key`, `access_key`, and `url` fields with your Nessus API credentials.
 
+## Changelog
+
+### 1.0.2 (wip)
+* fixed bug #1
+
+### 1.0.1
+* improved merging
+* added docs 
+
+### 1.0.0
+* first release
+
 ## Contributing
 
 Contributions are welcome! If you find a bug or have a feature request, please open an issue on the GitHub repository. If you'd like to contribute code, please fork the repository and submit a pull request.
