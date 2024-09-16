@@ -937,7 +937,10 @@ class NmapMerger(ScanMerger):
             except ParseError:
                 logging.error("Failed to parse nmap xml")
                 continue
-        self._render_template(hosts)
+        if hosts:
+            self._render_template(hosts)
+        else:
+            logging.error("No hosts found, could not generate merged nmap scan!")
 
     def _render_template(self, hosts: Dict[str, NmapHost]) -> str:
         payload: str = ""
