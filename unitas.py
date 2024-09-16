@@ -738,7 +738,7 @@ class ScanMerger(ABC):
         ):
             if (
                 self.output_directory not in file
-                and self.output_directory.split(".")[0] not in file
+                and self.output_directory.split(".")[1] not in file
             ):
                 files.append(file)
             else:
@@ -1224,6 +1224,7 @@ _  / / /_  __ \_  /_  __/  __ `/_  ___/
 
 def main() -> None:        
     # TBD: add project setup
+    # TBD: improve nessus exporter with unique ID
     parser = argparse.ArgumentParser(
         description=f"Unitas v{__version__}: A network scan parser and analyzer",
         epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
