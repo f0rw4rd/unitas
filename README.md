@@ -25,7 +25,7 @@ pip install git+https://github.com/f0rw4rd/unitas@latest
 To use Unitas, run the `unitas.py` script with the appropriate arguments:
 
 ```
-python unitas.py /path/to/scan/folder [options]
+unitas /path/to/scan/folder [options]
 ```
 
 ### Options
@@ -39,7 +39,7 @@ python unitas.py /path/to/scan/folder [options]
 - `-r`, `--rescan`: Print an Nmap command to re-scan the ports not service scanned
 - `-e`, `--export`: Export all scans from Nessus
 - `-m`, `--merge`: Merge scans in the folder
-
+- `-g`, `--grep`: Print host and ports in a grep-able format (including hosts that have no open ports)
 
 ## Markdown Table Output
 
@@ -64,13 +64,13 @@ Unitas also provides a useful feature that allows you to update your markdown ta
 For example, to update the table in the `state.md` file:
 
 ```
-python unitas.py /path/to/scan/folder -u state.md
+unitas /path/to/scan/folder -u state.md
 ```
 
 Or to update the table using stdin:
 
 ```
-cat updated_scan_results.md | python unitas.py -u
+cat updated_scan_results.md | unitas -u
 ```
 
 This feature ensures that your comments and notes are retained while the table is updated with the latest scan results.
@@ -79,29 +79,34 @@ This feature ensures that your comments and notes are retained while the table i
 
 Search for specific ports:
 ```
-python unitas.py /path/to/scan/folder -s "80,443"
+unitas /path/to/scan/folder -s "80,443"
 ```
 
 Search for specific services with URL prefix (filter non service scanned entries):
 ```
-python unitas.py /path/to/scan/folder -s "http,https" -U --service
+unitas /path/to/scan/folder -s "http,https" -U --service
 ```
 
 Generate an Nmap command to re-scan non-service scanned ports:
 ```
-python unitas.py /path/to/scan/folder -r
+unitas /path/to/scan/folder -r
 ```
 
 Export scans from Nessus:
 ```
-python unitas.py /path/to/scan/folder -e
+unitas /path/to/scan/folder -e
 ```
 
 Merge scan files in a folder:
 * creates a single nessus file for all nessus scans, two duplicate scan will lead to duplicate hosts in the scan
 * creates a single nmap scan xml and html report if xsltproc is installed
 ```
-python unitas.py /path/to/scan/folder -m
+unitas /path/to/scan/folder -m
+```
+
+Output hosts and ports in a grepable format:
+```
+unitas /path/to/scan/folder
 ```
 
 ## Configuration
@@ -114,6 +119,7 @@ Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. 
 * fixed bug #1
 * fixed bug #2
 * improved nessus export (speedup by fixing the file exist check and change filename of exports to include the scan id)
+* added grep-able output feature
 
 ### 1.0.1
 * improved merging

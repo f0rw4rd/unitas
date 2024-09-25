@@ -220,7 +220,7 @@ class HostScanData:
         self,
         port: str,
         protocol: str,
-        state: str,
+        state: str = "TBD",
         service: str = "unknown?",
         comment: str = "",
     ) -> None:
@@ -277,6 +277,25 @@ class Convert(ABC):
         sorted_ips = sorted(global_state.keys(), key=ip_address)
         return {ip: global_state[ip] for ip in sorted_ips}
 
+class GrepConverter(Convert):
+
+    def convert_with_up(self, hostup_dict: dict) -> str:
+        output = []
+        for ip, reason in hostup_dict.items():         
+            output.append(f"{ip}|host-up({reason})")
+        return "\n".join(output) + "\n" + self.convert()
+
+    def convert(self):
+        output = []
+        for host in self.global_state.values():
+            services = ""
+            for port in host.get_sorted_ports():
+                services += f"{port.port}/{port.protocol}({port.service}) "
+            output.append(f"{host.ip}|{services}")
+        return "\n".join(output) + "\n"
+
+    def parse(self, content: str) -> Dict[str, HostScanData]:
+        raise ValueError("not implemented")
 
 class MarkdownConvert(Convert):
     def convert(self, formatted: bool = False) -> str:
@@ -1276,6 +1295,14 @@ def main() -> None:
         help="Merge scans in the folder",
     )
 
+    parser.add_argument(
+        "-g",
+        "--grep",
+        action="store_true",
+        default=False,
+        help="Output the scan results in grepable format (including hosts that are up, but have no port open e.g. via ICMP)",
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -1362,6 +1389,13 @@ def main() -> None:
     if args.rescan:
         logging.info("nmap command to re-scan all non service scanned ports")
         logging.info(generate_nmap_scan_command(final_state))
+        return
+    
+    if args.grep:
+        grep_conv = GrepConverter(final_state)
+        logging.info("Scan Results (grep):")
+        print()
+        print(grep_conv.convert_with_up(hostup_dict))
         return
 
     if args.service:
