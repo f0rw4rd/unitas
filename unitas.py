@@ -616,28 +616,6 @@ class NessusExporter:
         self.ses.hooks = {"response": error_handler}
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    def upload_scan(self, file_path: str, name: str):
-        for scan in self._list_scans():
-            # 2 is the trash folder
-            if scan["name"] == NessusExporter.report_name and scan["folder_id"] != 2:
-                logging.info(f"Deleting scan {scan['id']}")
-                self.ses.delete(f"{self.url}/scans/{scan['id']}")
-        self._upload_file(file_path)
-        #
-
-    def _upload_file(self, filename: str):
-        if not os.path.isfile(filename):
-            raise ValueError("This file does not exist.")
-        with open(filename, "rb") as file:
-            resp = self.ses.post(
-                f"{self.url}/file/upload", files={"Filedata": file, "no_enc": "0"}
-            )
-            file_name = resp.json()["fileuploaded"]
-            self.ses.post(
-                "http://127.0.0.1:1234/scans/import",
-                json={"folder_id": 3, "file": file_name},
-            )
-
     def _initiate_export(self, scan_id):
         logging.info(f"Initiating export for scan ID: {scan_id}")
         return self.ses.post(
@@ -1334,9 +1312,7 @@ def main() -> None:
         )
         merger.parse()
         merger.save_report()
-        # upload does not work on Nessus pro. because tenable disabled API support. For manager only :-/
-        # logging.info("Trying to upload the merged scan!")
-        # NessusExporter().upload_scan(file, "merged")
+        # upload does not work on Nessus pro. because tenable disabled API support.
         return
 
     parsers = NessusParser.load_file(args.scan_folder) + NmapParser.load_file(
