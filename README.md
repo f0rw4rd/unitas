@@ -120,6 +120,7 @@ Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. 
 * fixed bug #2
 * improved nessus export (speedup by fixing the file exist check and change filename of exports to include the scan id)
 * added grep-able output feature
+* improved command for re-scan nmap command
 
 ### 1.0.1
 * improved merging

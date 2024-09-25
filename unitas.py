@@ -19,6 +19,7 @@ import configparser
 import shutil
 from copy import deepcopy
 from importlib.metadata import version, PackageNotFoundError
+from hashlib import sha512
 
 try:
     import requests
@@ -147,7 +148,7 @@ class PortDetails:
 
     @staticmethod
     def get_service_name(service: str, port: str):
-        if port == "445" and service == "netbios-ssn":
+        if port == "445" and service == "netbiosn":
             return "smb"
         if service in PortDetails.SERVICE_MAPPING:
             return PortDetails.SERVICE_MAPPING[service]
@@ -1199,7 +1200,9 @@ def generate_nmap_scan_command(global_state: Dict[str, HostScanData]) -> str:
         if tcp_ports:
             ports += ","
         ports += "U:" + ",".join(udp_ports)
-    return f"sudo nmap -s{''.join(scan_types)} -sV -v {ports} {' '.join(targets)}"
+    targets_str = ' '.join(targets)
+    # -Pn: we know that the host is up and skip pre scan
+    return f"sudo nmap -n -r --reason -Pn -s{''.join(scan_types)} -sV -v {ports} {targets_str} -oA service_scan_{sha512(targets_str.encode()).hexdigest()[:5]}"
 
 
 def filter_uncertain_services(
