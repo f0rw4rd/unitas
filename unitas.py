@@ -178,7 +178,10 @@ class ThreadSafeServiceLookup:
                     return self._cache[cache_id]
                 try:
                     service = socket.getservbyport(int(port), protocol)
-                except socket.error:
+                    if service is not None:
+                        service = default_service
+                except (socket.error, ValueError, TypeError):
+                    logging.debug(f"Lookup for {port} and {protocol} failed!")
                     service = default_service
                 service = PortDetails.get_service_name(service, port)
                 self._cache[cache_id] = service
