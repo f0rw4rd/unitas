@@ -24,6 +24,7 @@ from hashlib import sha512
 try:
     import requests
     import urllib3
+
     REQUESTS_INSTALLED = True
 except ImportError:
     REQUESTS_INSTALLED = False
@@ -32,6 +33,7 @@ try:
     __version__ = version("unitas")
 except PackageNotFoundError:
     __version__ = "dev-version"
+
 
 class UnitasConfig:
     def __init__(self, config_file: str = "~/.unitas"):
@@ -278,11 +280,12 @@ class Convert(ABC):
         sorted_ips = sorted(global_state.keys(), key=ip_address)
         return {ip: global_state[ip] for ip in sorted_ips}
 
+
 class GrepConverter(Convert):
 
     def convert_with_up(self, hostup_dict: dict) -> str:
         output = []
-        for ip, reason in hostup_dict.items():         
+        for ip, reason in hostup_dict.items():
             output.append(f"{ip}|host-up({reason})")
         return "\n".join(output) + "\n" + self.convert()
 
@@ -297,6 +300,7 @@ class GrepConverter(Convert):
 
     def parse(self, content: str) -> Dict[str, HostScanData]:
         raise ValueError("not implemented")
+
 
 class MarkdownConvert(Convert):
     def convert(self, formatted: bool = False) -> str:
@@ -657,7 +661,7 @@ class NessusExporter:
             logging.debug("Export is not ready yet, waiting 5 seconds...")
             time.sleep(5)
 
-    def _list_scans(self) -> List[Dict]:        
+    def _list_scans(self) -> List[Dict]:
         logging.debug("Listing nessus scans")
         scans = self.ses.get(f"{self.url}/scans").json()["scans"]
         if not scans:
@@ -675,7 +679,7 @@ class NessusExporter:
     def _sanitize_name(self, scan: dict) -> str:
         return scan["name"].replace(" ", "_").replace("/", "_").replace("\\", "_")
 
-    def _generate_file_name(self, target_dir: str, scan: dict) -> str: 
+    def _generate_file_name(self, target_dir: str, scan: dict) -> str:
         scan_id = scan["id"]
         scan_name = self._sanitize_name(scan)
         filename = os.path.join(target_dir, f"{scan_name}_{scan_id}.nessus")
@@ -687,9 +691,7 @@ class NessusExporter:
         if os.path.exists(filename):
             logging.error(f"Export file {filename} already exists. Skipping download.")
             return
-        logging.info(
-            f"Downloading export for scan ID: {scan_id} to {filename}"
-        )
+        logging.info(f"Downloading export for scan ID: {scan_id} to {filename}")
         response = self.ses.get(
             f"{self.url}/scans/{scan_id}/export/{file_id}/download", stream=True
         )
@@ -1200,7 +1202,7 @@ def generate_nmap_scan_command(global_state: Dict[str, HostScanData]) -> str:
         if tcp_ports:
             ports += ","
         ports += "U:" + ",".join(udp_ports)
-    targets_str = ' '.join(targets)
+    targets_str = " ".join(targets)
     # -Pn: we know that the host is up and skip pre scan
     return f"sudo nmap -n -r --reason -Pn -s{''.join(scan_types)} -sV -v {ports} {targets_str} -oA service_scan_{sha512(targets_str.encode()).hexdigest()[:5]}"
 
@@ -1227,7 +1229,7 @@ _  / / /_  __ \_  /_  __/  __ `/_  ___/
                                        """
 
 
-def main() -> None:  
+def main() -> None:
     parser = argparse.ArgumentParser(
         description=f"Unitas v{__version__}: A network scan parser and analyzer",
         epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
@@ -1325,7 +1327,9 @@ def main() -> None:
 
     if args.export:
         if not REQUESTS_INSTALLED:
-            logging.error("requests was not installed, please install it via pip to use the exporter!")
+            logging.error(
+                "requests was not installed, please install it via pip to use the exporter!"
+            )
             return
         logging.info(f"Starting nessus export to {os.path.abspath(args.scan_folder)}")
         NessusExporter().export(args.scan_folder)
@@ -1393,7 +1397,7 @@ def main() -> None:
         logging.info("nmap command to re-scan all non service scanned ports")
         logging.info(generate_nmap_scan_command(final_state))
         return
-    
+
     if args.grep:
         grep_conv = GrepConverter(final_state)
         logging.info("Scan Results (grep):")
