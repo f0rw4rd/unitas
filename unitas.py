@@ -146,11 +146,13 @@ class PortDetails:
         "microsoft-ds": "smb",
         "cifs": "smb",
         "ms-wbt-server": "rdp",
+        "ms-msql-s": "mssql"
     }
 
     @staticmethod
     def get_service_name(service: str, port: str):
-        if port == "445" and service == "netbiosn":
+        # some times nmap shows smb as netbios, but only overwrite this for port 445
+        if port == "445" and "netbios" in service:
             return "smb"
         if service in PortDetails.SERVICE_MAPPING:
             return PortDetails.SERVICE_MAPPING[service]
@@ -178,7 +180,7 @@ class ThreadSafeServiceLookup:
                     return self._cache[cache_id]
                 try:
                     service = socket.getservbyport(int(port), protocol)
-                    if service is not None:
+                    if service is None:
                         service = default_service
                 except (socket.error, ValueError, TypeError):
                     logging.debug(f"Lookup for {port} and {protocol} failed!")

@@ -1,9 +1,12 @@
 # pylint: skip-file
 import unittest
+from unittest.mock import patch, MagicMock
 import os
+import socket
+import sys
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
-import sys
+from concurrent.futures import ThreadPoolExecutor
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from unitas import (
     PortDetails,
@@ -14,8 +17,87 @@ from unitas import (
     NessusParser,
     search_port_or_service,
     MarkdownConvert,
+    ThreadSafeServiceLookup
 )
 
+
+class TestThreadSafeServiceLookup(unittest.TestCase):
+    def setUp(self):
+        self.service_lookup = ThreadSafeServiceLookup()
+        
+    def test_valid_port_lookup(self):
+        """Test lookup with a valid port number"""
+        with patch('socket.getservbyport') as mock_getservbyport:
+            mock_getservbyport.return_value = 'http'
+            result = self.service_lookup.get_service_name_for_port('80')
+            self.assertEqual(result, 'http')
+            mock_getservbyport.assert_called_once_with(80, 'tcp')
+
+    def test_invalid_port_raises_error(self):
+        """Test that invalid ports raise ValueError"""
+        invalid_ports = ['-1', '65536', 'abc', '']
+        for port in invalid_ports:
+            with self.assertRaises(ValueError):
+                self.service_lookup.get_service_name_for_port(port)
+
+    def test_cache_hit(self):
+        """Test that cached values are returned without socket lookup"""
+        with patch('socket.getservbyport') as mock_getservbyport:
+            mock_getservbyport.return_value = 'http'
+            
+            # First call should hit socket
+            first_result = self.service_lookup.get_service_name_for_port('80')
+            
+            # Second call should use cache
+            second_result = self.service_lookup.get_service_name_for_port('80')
+            
+            self.assertEqual(first_result, second_result)
+            mock_getservbyport.assert_called_once()  # Should only be called once
+
+    def test_different_protocols(self):
+        """Test that different protocols create different cache entries"""
+        with patch('socket.getservbyport') as mock_getservbyport:
+            mock_getservbyport.return_value = 'service'
+            
+            tcp_result = self.service_lookup.get_service_name_for_port('80', 'tcp')
+            udp_result = self.service_lookup.get_service_name_for_port('80', 'udp')
+            
+            self.assertEqual(mock_getservbyport.call_count, 2)
+            self.assertEqual(len(self.service_lookup._cache), 2)
+
+    def test_socket_error_handling(self):
+        """Test handling of socket.error"""
+        with patch('socket.getservbyport') as mock_getservbyport:
+            mock_getservbyport.side_effect = socket.error()
+            
+            result = self.service_lookup.get_service_name_for_port('12345', default_service='custom-default')
+            self.assertEqual(result, 'custom-default')
+
+    def test_thread_safety(self):
+        """Test thread safety by concurrent access"""
+        def concurrent_lookup(port):
+            return self.service_lookup.get_service_name_for_port(str(port))
+
+        with patch('socket.getservbyport') as mock_getservbyport:
+            mock_getservbyport.return_value = 'service'
+            
+            # Test with multiple concurrent lookups
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                ports = [80] * 20  # Multiple concurrent lookups of the same port
+                results = list(executor.map(concurrent_lookup, ports))
+            
+            # All results should be identical
+            self.assertEqual(len(set(results)), 1)
+            # Socket lookup should happen only once due to caching
+            self.assertEqual(mock_getservbyport.call_count, 1)
+
+    def test_custom_default_service(self):
+        """Test custom default service value"""
+        with patch('socket.getservbyport') as mock_getservbyport:
+            mock_getservbyport.side_effect = socket.error()
+            
+            result = self.service_lookup.get_service_name_for_port('8080', default_service='custom-service')
+            self.assertEqual(result, 'custom-service')
 
 class TestNmapParser(unittest.TestCase):
     def setUp(self):
@@ -544,6 +626,65 @@ class TestPortDetails(unittest.TestCase):
 
         except ValueError:
             self.fail("PortDetails raised ValueError unexpectedly!")
+
+class TestPortDetailsServiceName(unittest.TestCase):
+    def test_special_case_port_445(self):
+        """Test the special case handling for port 445 with netbiosn service"""
+        result = PortDetails.get_service_name("netbiosn", "445")
+        self.assertEqual(result, "smb")
+
+    def test_service_mapping(self):
+        """Test that services are correctly mapped according to SERVICE_MAPPING"""
+        test_cases = [
+            ("www", "80", "http"),
+            ("microsoft-ds", "445", "smb"),
+            ("cifs", "445", "smb"),
+            ("ms-wbt-server", "3389", "rdp"),
+            ("ms-msql-s", "1433", "mssql")
+        ]
+        
+        for service, port, expected in test_cases:
+            with self.subTest(service=service, port=port):
+                result = PortDetails.get_service_name(service, port)
+                self.assertEqual(result, expected)
+
+    def test_unmapped_service_returns_unchanged(self):
+        """Test that services not in mapping are returned unchanged"""
+        test_cases = [
+            ("ssh", "22"),
+            ("ftp", "21"),
+            ("https", "443"),
+            ("custom-service", "9999")
+        ]
+        
+        for service, port in test_cases:
+            with self.subTest(service=service, port=port):
+                result = PortDetails.get_service_name(service, port)
+                self.assertEqual(result, service)
+                # Verify service is indeed not in the static mapping
+                self.assertNotIn(service, PortDetails.SERVICE_MAPPING)
+
+    def test_port_445_with_other_services(self):
+        """Test that port 445 only affects 'netbiosn' service"""
+        test_cases = [
+            ("smb", "445"),
+            ("microsoft-ds", "445"),
+            ("other-service", "445")
+        ]
+        
+        for service, port in test_cases:
+            with self.subTest(service=service, port=port):
+                result = PortDetails.get_service_name(service, port)
+                self.assertEqual(
+                    result, 
+                    PortDetails.SERVICE_MAPPING.get(service, service)
+                )
+
+    def test_empty_strings(self):
+        """Test behavior with empty strings"""
+        result = PortDetails.get_service_name("", "")
+        self.assertEqual(result, "")
+
 
 
 class TestSearchFunction(unittest.TestCase):
