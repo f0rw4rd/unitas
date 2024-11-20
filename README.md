@@ -116,7 +116,9 @@ Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. 
 ## Changelog
 
 ### 1.0.3
-* 
+* improved the service lookup
+* fixed a bug if a directory with .xml is found
+* TBD: checkout how merge nessus hardening settings
 
 ### 1.0.2
 * fixed bug #1

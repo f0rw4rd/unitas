@@ -740,18 +740,17 @@ class ScanMerger(ABC):
 
     def search(self, wildcard: str) -> List[str]:
         files = []
-        for file in glob.glob(
-            os.path.join(self.directory, "**", wildcard), recursive=True
-        ):
-            if (
-                self.output_directory not in file
-                and self.output_directory.split(".")[1] not in file
-            ):
+        for file in glob.glob(os.path.join(self.directory, "**", wildcard), recursive=True):
+            # Skip if it's a directory
+            if os.path.isdir(file):
+                continue
+
+            # Skip output directory files
+            if self.output_directory not in file and self.output_directory.split(".")[1] not in file:
                 files.append(file)
             else:
-                logging.warning(
-                    f"Skipping file {file} to prevent merging a merged scan!"
-                )
+                logging.warning(f"Skipping file {file} to prevent merging a merged scan!")
+        
         return files
 
     def parse(self):
@@ -941,6 +940,9 @@ class NmapMerger(ScanMerger):
                             if os_e is not None:
                                 host.remove(os_e)
                                 nhost.os_e = os_e
+            except IsADirectoryError:
+                logging.error("Seems like we tried to open a dir")
+                continue
             except ParseError:
                 logging.error("Failed to parse nmap xml")
                 continue
@@ -1028,6 +1030,8 @@ class NessusMerger(ScanMerger):
                 else:
                     tree = ET.parse(file_path)
                     self._merge_hosts(tree)
+            except IsADirectoryError:
+                logging.error("Seems like we tried to open a dir")            
             except ParseError:
                 logging.error("Failed to parse")
 
