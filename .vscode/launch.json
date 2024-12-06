@@ -50,6 +50,19 @@
             ]
         },
         {
+            "name": "Start Parser with search (without url)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "unitas.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-v",
+                "--search",
+                "445",
+                "tests"
+            ]
+        },
+        {
             "name": "Start Parser with only service scanned ports",
             "type": "debugpy",
             "request": "launch",

@@ -146,7 +146,7 @@ class PortDetails:
         "microsoft-ds": "smb",
         "cifs": "smb",
         "ms-wbt-server": "rdp",
-        "ms-msql-s": "mssql"
+        "ms-msql-s": "mssql",
     }
 
     @staticmethod
@@ -740,17 +740,24 @@ class ScanMerger(ABC):
 
     def search(self, wildcard: str) -> List[str]:
         files = []
-        for file in glob.glob(os.path.join(self.directory, "**", wildcard), recursive=True):
+        for file in glob.glob(
+            os.path.join(self.directory, "**", wildcard), recursive=True
+        ):
             # Skip if it's a directory
             if os.path.isdir(file):
                 continue
 
             # Skip output directory files
-            if self.output_directory not in file and self.output_directory.split(".")[1] not in file:
+            if (
+                self.output_directory not in file
+                and self.output_directory.split(".")[1] not in file
+            ):
                 files.append(file)
             else:
-                logging.warning(f"Skipping file {file} to prevent merging a merged scan!")
-        
+                logging.warning(
+                    f"Skipping file {file} to prevent merging a merged scan!"
+                )
+
         return files
 
     def parse(self):
@@ -1031,7 +1038,7 @@ class NessusMerger(ScanMerger):
                     tree = ET.parse(file_path)
                     self._merge_hosts(tree)
             except IsADirectoryError:
-                logging.error("Seems like we tried to open a dir")            
+                logging.error("Seems like we tried to open a dir")
             except ParseError:
                 logging.error("Failed to parse")
 
@@ -1138,7 +1145,10 @@ def merge_states(
 
 
 def search_port_or_service(
-    global_state: Dict[str, HostScanData], search_terms: List[str], with_url: bool
+    global_state: Dict[str, HostScanData],
+    search_terms: List[str],
+    with_url: bool,
+    hide_ports: bool,
 ) -> List[str]:
     matching_ips = set()
     for ip, host_data in global_state.items():
@@ -1153,7 +1163,21 @@ def search_port_or_service(
                     url: str = ip
                     if with_url:
                         url = service + "://" + url
-                    url += ":" + port_nr
+
+                    if port == 139:
+                        pass
+
+                    # show ports if the port is not the default port for the service
+                    # if multiple terms are used, do not do this e.g. http and https, which leads to the same host without any context which is which
+                    if hide_ports:
+                        pass  # no need to do anything
+
+                    elif (
+                        not service_lookup.get_service_name_for_port(port_nr) == service
+                        or len(search_terms) > 1
+                    ):
+                        url += ":" + port_nr
+
                     matching_ips.add(url)
 
     return sorted(list(matching_ips))
@@ -1283,6 +1307,14 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Show only service scanned ports",
+    )
+
+    parser.add_argument(
+        "-p",
+        "--hide-ports",
+        action="store_true",
+        default=False,
+        help="Hide ports from search",
     )
 
     parser.add_argument(
@@ -1419,8 +1451,11 @@ def main() -> None:
         final_state = filter_uncertain_services(final_state)
 
     if args.search:
+        hide_ports = args.hide_ports
         search_terms = [term.strip().lower() for term in args.search.split(",")]
-        matching_ips = search_port_or_service(final_state, search_terms, args.url)
+        matching_ips = search_port_or_service(
+            final_state, search_terms, args.url, hide_ports
+        )
         if matching_ips:
             logging.info(
                 f"Systems with ports/services matching '{', '.join(search_terms)}':"

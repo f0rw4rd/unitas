@@ -7,7 +7,8 @@ import sys
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 from concurrent.futures import ThreadPoolExecutor
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from unitas import (
     PortDetails,
     HostScanData,
@@ -17,75 +18,78 @@ from unitas import (
     NessusParser,
     search_port_or_service,
     MarkdownConvert,
-    ThreadSafeServiceLookup
+    ThreadSafeServiceLookup,
 )
 
 
 class TestThreadSafeServiceLookup(unittest.TestCase):
     def setUp(self):
         self.service_lookup = ThreadSafeServiceLookup()
-        
+
     def test_valid_port_lookup(self):
         """Test lookup with a valid port number"""
-        with patch('socket.getservbyport') as mock_getservbyport:
-            mock_getservbyport.return_value = 'http'
-            result = self.service_lookup.get_service_name_for_port('80')
-            self.assertEqual(result, 'http')
-            mock_getservbyport.assert_called_once_with(80, 'tcp')
+        with patch("socket.getservbyport") as mock_getservbyport:
+            mock_getservbyport.return_value = "http"
+            result = self.service_lookup.get_service_name_for_port("80")
+            self.assertEqual(result, "http")
+            mock_getservbyport.assert_called_once_with(80, "tcp")
 
     def test_invalid_port_raises_error(self):
         """Test that invalid ports raise ValueError"""
-        invalid_ports = ['-1', '65536', 'abc', '']
+        invalid_ports = ["-1", "65536", "abc", ""]
         for port in invalid_ports:
             with self.assertRaises(ValueError):
                 self.service_lookup.get_service_name_for_port(port)
 
     def test_cache_hit(self):
         """Test that cached values are returned without socket lookup"""
-        with patch('socket.getservbyport') as mock_getservbyport:
-            mock_getservbyport.return_value = 'http'
-            
+        with patch("socket.getservbyport") as mock_getservbyport:
+            mock_getservbyport.return_value = "http"
+
             # First call should hit socket
-            first_result = self.service_lookup.get_service_name_for_port('80')
-            
+            first_result = self.service_lookup.get_service_name_for_port("80")
+
             # Second call should use cache
-            second_result = self.service_lookup.get_service_name_for_port('80')
-            
+            second_result = self.service_lookup.get_service_name_for_port("80")
+
             self.assertEqual(first_result, second_result)
             mock_getservbyport.assert_called_once()  # Should only be called once
 
     def test_different_protocols(self):
         """Test that different protocols create different cache entries"""
-        with patch('socket.getservbyport') as mock_getservbyport:
-            mock_getservbyport.return_value = 'service'
-            
-            tcp_result = self.service_lookup.get_service_name_for_port('80', 'tcp')
-            udp_result = self.service_lookup.get_service_name_for_port('80', 'udp')
-            
+        with patch("socket.getservbyport") as mock_getservbyport:
+            mock_getservbyport.return_value = "service"
+
+            tcp_result = self.service_lookup.get_service_name_for_port("80", "tcp")
+            udp_result = self.service_lookup.get_service_name_for_port("80", "udp")
+
             self.assertEqual(mock_getservbyport.call_count, 2)
             self.assertEqual(len(self.service_lookup._cache), 2)
 
     def test_socket_error_handling(self):
         """Test handling of socket.error"""
-        with patch('socket.getservbyport') as mock_getservbyport:
+        with patch("socket.getservbyport") as mock_getservbyport:
             mock_getservbyport.side_effect = socket.error()
-            
-            result = self.service_lookup.get_service_name_for_port('12345', default_service='custom-default')
-            self.assertEqual(result, 'custom-default')
+
+            result = self.service_lookup.get_service_name_for_port(
+                "12345", default_service="custom-default"
+            )
+            self.assertEqual(result, "custom-default")
 
     def test_thread_safety(self):
         """Test thread safety by concurrent access"""
+
         def concurrent_lookup(port):
             return self.service_lookup.get_service_name_for_port(str(port))
 
-        with patch('socket.getservbyport') as mock_getservbyport:
-            mock_getservbyport.return_value = 'service'
-            
+        with patch("socket.getservbyport") as mock_getservbyport:
+            mock_getservbyport.return_value = "service"
+
             # Test with multiple concurrent lookups
             with ThreadPoolExecutor(max_workers=10) as executor:
                 ports = [80] * 20  # Multiple concurrent lookups of the same port
                 results = list(executor.map(concurrent_lookup, ports))
-            
+
             # All results should be identical
             self.assertEqual(len(set(results)), 1)
             # Socket lookup should happen only once due to caching
@@ -93,17 +97,18 @@ class TestThreadSafeServiceLookup(unittest.TestCase):
 
     def test_custom_default_service(self):
         """Test custom default service value"""
-        with patch('socket.getservbyport') as mock_getservbyport:
+        with patch("socket.getservbyport") as mock_getservbyport:
             mock_getservbyport.side_effect = socket.error()
-            
-            result = self.service_lookup.get_service_name_for_port('8080', default_service='custom-service')
-            self.assertEqual(result, 'custom-service')
+
+            result = self.service_lookup.get_service_name_for_port(
+                "8080", default_service="custom-service"
+            )
+            self.assertEqual(result, "custom-service")
+
 
 class TestNmapParser(unittest.TestCase):
     def setUp(self):
-        self.test_files_dir = os.path.join(
-            os.path.dirname(__file__),  "nmap_files"
-        )
+        self.test_files_dir = os.path.join(os.path.dirname(__file__), "nmap_files")
 
     def _get_path(self, file):
         return os.path.join(self.test_files_dir, file)
@@ -257,9 +262,7 @@ class TestNmapParser(unittest.TestCase):
 
 class TestNessusParser(unittest.TestCase):
     def setUp(self):
-        self.test_files_dir = os.path.join(
-            os.path.dirname(__file__),  "nessus_files"
-        )
+        self.test_files_dir = os.path.join(os.path.dirname(__file__), "nessus_files")
 
     def _get_path(self, file):
         return os.path.join(self.test_files_dir, file)
@@ -627,6 +630,7 @@ class TestPortDetails(unittest.TestCase):
         except ValueError:
             self.fail("PortDetails raised ValueError unexpectedly!")
 
+
 class TestPortDetailsServiceName(unittest.TestCase):
     def test_special_case_port_445(self):
         """Test the special case handling for port 445 with netbiosn service"""
@@ -640,9 +644,9 @@ class TestPortDetailsServiceName(unittest.TestCase):
             ("microsoft-ds", "445", "smb"),
             ("cifs", "445", "smb"),
             ("ms-wbt-server", "3389", "rdp"),
-            ("ms-msql-s", "1433", "mssql")
+            ("ms-msql-s", "1433", "mssql"),
         ]
-        
+
         for service, port, expected in test_cases:
             with self.subTest(service=service, port=port):
                 result = PortDetails.get_service_name(service, port)
@@ -654,9 +658,9 @@ class TestPortDetailsServiceName(unittest.TestCase):
             ("ssh", "22"),
             ("ftp", "21"),
             ("https", "443"),
-            ("custom-service", "9999")
+            ("custom-service", "9999"),
         ]
-        
+
         for service, port in test_cases:
             with self.subTest(service=service, port=port):
                 result = PortDetails.get_service_name(service, port)
@@ -666,25 +670,19 @@ class TestPortDetailsServiceName(unittest.TestCase):
 
     def test_port_445_with_other_services(self):
         """Test that port 445 only affects 'netbiosn' service"""
-        test_cases = [
-            ("smb", "445"),
-            ("microsoft-ds", "445"),
-            ("other-service", "445")
-        ]
-        
+        test_cases = [("smb", "445"), ("microsoft-ds", "445"), ("other-service", "445")]
+
         for service, port in test_cases:
             with self.subTest(service=service, port=port):
                 result = PortDetails.get_service_name(service, port)
                 self.assertEqual(
-                    result, 
-                    PortDetails.SERVICE_MAPPING.get(service, service)
+                    result, PortDetails.SERVICE_MAPPING.get(service, service)
                 )
 
     def test_empty_strings(self):
         """Test behavior with empty strings"""
         result = PortDetails.get_service_name("", "")
         self.assertEqual(result, "")
-
 
 
 class TestSearchFunction(unittest.TestCase):
@@ -702,55 +700,63 @@ class TestSearchFunction(unittest.TestCase):
         self.global_state["192.168.1.3"].add_port("12345", "tcp", "open", "rdp?")
 
     def test_search_by_port(self):
-        result = search_port_or_service(self.global_state, [" 80"], False)
-        self.assertEqual(result, ["192.168.1.1:80", "192.168.1.3:80"])
+        result = search_port_or_service(self.global_state, [" 80"], False, True)
+        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
 
-        result = search_port_or_service(self.global_state, ["22"], False)
-        self.assertEqual(result, ["192.168.1.2:22"])
+        result = search_port_or_service(self.global_state, ["22"], False, False)
+        self.assertEqual(result, ["192.168.1.2"])
 
-        result = search_port_or_service(self.global_state, ["3306"], False)
-        self.assertEqual(result, ["192.168.1.3:3306"])
+        result = search_port_or_service(self.global_state, ["3306"], False, True)
+        self.assertEqual(result, ["192.168.1.3"])
 
     def test_search_by_service_url(self):
-        result = search_port_or_service(self.global_state, ["ssh"], with_url=True)
-        self.assertEqual(result, ["ssh://192.168.1.2:22"])
+        result = search_port_or_service(
+            self.global_state, ["ssh"], with_url=True, hide_ports=True
+        )
+        self.assertEqual(result, ["ssh://192.168.1.2"])
 
     def test_case_insensitive_search_url(self):
-        result = search_port_or_service(self.global_state, ["HTTP"], with_url=True)
-        self.assertEqual(result, ["http://192.168.1.1:80", "http://192.168.1.3:80"])
+        result = search_port_or_service(
+            self.global_state, ["HTTP"], with_url=True, hide_ports=False
+        )
+        self.assertEqual(result, ["http://192.168.1.1", "http://192.168.1.3"])
 
     def test_service_with_question_mark_url(self):
         self.global_state["192.168.1.2"].add_port("8080", "tcp", "TBD", "http-alt?")
-        result = search_port_or_service(self.global_state, ["8080"], with_url=True)
-        self.assertEqual(result, ["http-alt://192.168.1.2:8080"])
+        result = search_port_or_service(
+            self.global_state, ["8080"], with_url=True, hide_ports=False
+        )
+        self.assertEqual(result, ["http-alt://192.168.1.2"])
 
     def test_search_by_service(self):
-        result = search_port_or_service(self.global_state, ["http"], False)
-        self.assertEqual(result, ["192.168.1.1:80", "192.168.1.3:80"])
+        result = search_port_or_service(self.global_state, ["http"], False, True)
+        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
 
-        result = search_port_or_service(self.global_state, ["ssh"], False)
-        self.assertEqual(result, ["192.168.1.2:22"])
+        result = search_port_or_service(self.global_state, ["ssh"], False, True)
+        self.assertEqual(result, ["192.168.1.2"])
 
-        result = search_port_or_service(self.global_state, ["mysql"], False)
-        self.assertEqual(result, ["192.168.1.3:3306"])
+        result = search_port_or_service(self.global_state, ["mysql"], False, True)
+        self.assertEqual(result, ["192.168.1.3"])
 
     def test_case_insensitive_service_search(self):
-        result = search_port_or_service(self.global_state, ["HTTP"], False)
-        self.assertEqual(result, ["192.168.1.1:80", "192.168.1.3:80"])
+        result = search_port_or_service(self.global_state, ["HTTP"], False, False)
+        self.assertEqual(result, ["192.168.1.1", "192.168.1.3"])
 
     def test_search_non_existent(self):
-        result = search_port_or_service(self.global_state, ["8080"], False)
+        result = search_port_or_service(self.global_state, ["8080"], False, False)
         self.assertEqual(result, [])
 
-        result = search_port_or_service(self.global_state, ["ftp"], False)
+        result = search_port_or_service(self.global_state, ["ftp"], False, False)
         self.assertEqual(result, [])
 
     def test_search_for_question_mark(self):
-        result = search_port_or_service(self.global_state, ["rdp"], False)
+        result = search_port_or_service(self.global_state, ["rdp"], False, False)
         self.assertEqual(result, ["192.168.1.3:12345"])
 
     def test_search_for_two_ports_on_the_same_host(self):
-        result = search_port_or_service(self.global_state, ["http", "https"], False)
+        result = search_port_or_service(
+            self.global_state, ["http", "https"], False, False
+        )
         self.assertEqual(
             result, ["192.168.1.1:443", "192.168.1.1:80", "192.168.1.3:80"]
         )
