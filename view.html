@@ -804,7 +804,7 @@
                                 </select></div>
                             <div class=range-filter><label>Port Range:</label>
                                 <div class=range-inputs><input type=number id=port-min min=1 max=65535
-                                        value=1><span>to</span><input type=number id=port-min min=1 max=65535
+                                        value=1><span>to</span><input type=number id=port-max min=1 max=65535
                                         value=65535></div>
                             </div>
                             <div class=subnet-filter><label for=subnet-filter>Filter by Subnet:</label><input
@@ -890,7 +890,950 @@
         <div class=loading-spinner></div>
     </div>
     <footer>Unitas Network Graph Viewer - Enhanced Visualization Tool</footer>
-    <script>let scanData = null, network = null, nodesDataset = null, edgesDataset = null, pinnedNodes = new Set, filteredItems = { hosts: new Set, services: new Set, nodes: new Set, edges: new Set }, serviceTypes = new Set, minimapNetwork = null, physicsEnabled = !0, selectedNode = null, savedViews = {}, subnetGroups = {}; const initialScreen = document.getElementById("initial-screen"), dataView = document.getElementById("data-view"), dropArea = document.getElementById("drop-area"), fileInput = document.getElementById("file-input"), errorMessage = document.getElementById("error-message"), reloadBtn = document.getElementById("reload-btn"), loadingOverlay = document.getElementById("loading-overlay"), nodeDetails = document.getElementById("node-details"), nodeDetailsContent = document.getElementById("node-details-content"), graphMinimap = document.getElementById("graph-minimap"), graphTooltip = document.getElementById("graph-tooltip"); function preventDefaults(e) { e.preventDefault(), e.stopPropagation() } function highlight() { dropArea.classList.add("highlight") } function unhighlight() { dropArea.classList.remove("highlight") } function handleDrop(e) { const t = e.dataTransfer.files; 1 === t.length ? handleFile(t[0]) : showError("Please drop a single JSON file.") } function showError(e) { errorMessage.textContent = e, errorMessage.classList.remove("hidden") } function handleFile(e) { if (!e.name.endsWith(".json")) return void showError("Please select a JSON file (.json)"); showLoading(); const t = new FileReader; t.onload = function (e) { try { scanData = JSON.parse(e.target.result), validateAndDisplayData(scanData) } catch (e) { console.error("Error parsing JSON:", e), showError("Invalid JSON file. Please select a valid Unitas export file."), hideLoading() } }, t.onerror = function () { showError("Error reading file"), hideLoading() }, t.readAsText(e) } function validateAndDisplayData(e) { if (!e.hosts || !Array.isArray(e.hosts)) return showError("Invalid data format: Missing hosts array"), void hideLoading(); initialScreen.classList.add("hidden"), dataView.classList.remove("hidden"), errorMessage.classList.add("hidden"), e.metadata ? (document.getElementById("scan-date").textContent = `Generated: ${e.metadata.generated || "Unknown"}`, document.getElementById("scan-version").textContent = `Unitas ${e.metadata.version || "Unknown"}`) : (document.getElementById("scan-date").textContent = "Generated: Unknown", document.getElementById("scan-version").textContent = "Unitas Unknown"), updateStats(), populateServiceFilter(), renderGraph(), setupEventHandlers(), hideLoading() } function showLoading() { loadingOverlay.style.display = "flex" } function hideLoading() { loadingOverlay.style.display = "none" } function updateStats() { if (!scanData) return; document.getElementById("total-hosts").textContent = scanData.hosts.length; let e = 0; scanData.hosts.forEach((t => { e += t.ports.length })), document.getElementById("total-ports").textContent = e, document.getElementById("up-hosts").textContent = scanData.hostsUp ? scanData.hostsUp.length : 0, serviceTypes.clear(), scanData.hosts.forEach((e => { e.ports.forEach((e => { const t = e.service.replace("?", ""); serviceTypes.add(t) })) })), document.getElementById("services-count").textContent = serviceTypes.size } function populateServiceFilter() { const e = document.getElementById("service-filter"); e.innerHTML = '<option value="all">All Services</option>', Array.from(serviceTypes).sort().forEach((t => { const n = document.createElement("option"); n.value = t, n.textContent = t, e.appendChild(n) })) } function renderGraph() { if (!scanData) return; const e = document.getElementById("graph-container"), { nodes: t, edges: n } = createGraphData(); nodesDataset = new vis.DataSet(t), edgesDataset = new vis.DataSet(n); const o = { nodes: nodesDataset, edges: edgesDataset }, s = createGraphOptions(); network = new vis.Network(e, o, s), setupNetworkEvents(), initializeMinimap(t, n) } function createGraphData() { const e = [], t = []; let n = 1; const o = {}, s = new Map, r = new Map; return processSubnets(), scanData.hosts.forEach((i => { const a = n++; s.set(i.ip, a), o[i.ip] = a; const d = Math.max(10, Math.min(30, 10 + 2 * i.ports.length)), c = getSubnetGroup(i.ip); e.push({ id: a, label: i.hostname || i.ip, title: formatNodeTooltip(i), group: "host", subnetGroup: c, type: "host", ip: i.ip, hostname: i.hostname, value: d, ports: i.ports.length, original: i }); const l = {}; i.ports.forEach((e => { const t = e.service.replace("?", ""); l[t] || (l[t] = []), l[t].push(e) })), Object.entries(l).forEach((([o, s]) => { let i; if (r.has(o)) i = r.get(o); else { i = n++, r.set(o, i); const t = countServiceInstances(o), a = Math.max(8, Math.min(25, 8 + t)); e.push({ id: i, label: o, title: `<strong>${o}</strong><br>Instances: ${t}`, group: "service", type: "service", value: a, service: o, uncertain: s.some((e => e.service.includes("?") || e.uncertain)), tls: s.some((e => e.comment.includes("TLS") || e.tls)) }) } t.push({ from: a, to: i, title: formatEdgeTooltip(s), width: Math.max(1, Math.min(5, Math.sqrt(2 * s.length))), arrows: { to: { enabled: !1 } }, color: { color: "#999", highlight: "#3498db" }, smooth: { type: "continuous" }, ports: s }) })) })), scanData.hostsUp && document.getElementById("show-up-hosts").checked && scanData.hostsUp.forEach((t => { e.push({ id: n++, label: t.ip, title: `<strong>${t.ip}</strong><br>Up: ${t.reason}`, group: "up-only", type: "up-host", ip: t.ip, reason: t.reason, subnetGroup: getSubnetGroup(t.ip) }) })), { nodes: e, edges: t } } function createGraphOptions() { return { nodes: { shape: "dot", size: parseInt(document.getElementById("node-size").value), font: { size: 14 }, borderWidth: 2, shadow: !0 }, edges: { width: 2, shadow: !0, smooth: { type: "continuous" } }, groups: { host: { color: { border: "#2980b9", background: "#3498db", highlight: { border: "#2980b9", background: "#5DADF5" } }, shape: "dot" }, service: { color: { border: "#27ae60", background: "#2ecc71", highlight: { border: "#27ae60", background: "#58D88D" } }, shape: "hexagon" }, "up-only": { color: { border: "#d35400", background: "#e67e22", highlight: { border: "#d35400", background: "#EB9950" } }, shape: "diamond" }, pinned: { color: { border: "#8e44ad", background: "#9b59b6", highlight: { border: "#8e44ad", background: "#ac6fc6" } }, fixed: !0 } }, physics: { enabled: physicsEnabled, stabilization: !0, barnesHut: { gravitationalConstant: -1e4, springConstant: .002, springLength: 150 } }, interaction: { hover: !0, tooltipDelay: 200, hideEdgesOnDrag: !0, multiselect: !0, navigationButtons: !0 }, layout: getSelectedLayout() } } function getSelectedLayout() { switch (document.querySelector('input[name="layout"]:checked').value) { case "hierarchical": return { hierarchical: { direction: "UD", sortMethod: "directed", nodeSpacing: 150, levelSeparation: 150 } }; case "circular": return { improvedLayout: !0, randomSeed: 42 }; default: return { improvedLayout: !0 } } } function setupNetworkEvents() { network && (network.on("click", (function (e) { if (0 === e.nodes.length) return nodeDetails.style.display = "none", void (selectedNode = null); selectedNode = nodesDataset.get(e.nodes[0]), showNodeDetails(selectedNode), highlightConnections(e.nodes[0]) })), network.on("doubleClick", (function (e) { 1 === e.nodes.length && network.focus(e.nodes[0], { scale: 1.2, animation: !0 }) })), network.on("hoverNode", (function (e) { showTooltip(e.node, e.event.center) })), network.on("blurNode", (function () { hideTooltip() })), network.on("hoverEdge", (function (e) { const t = edgesDataset.get(e.edge); showTooltip(e.edge, e.event.center, !0, t) })), network.on("blurEdge", (function () { hideTooltip() })), network.on("stabilizationProgress", (function (e) { const t = Math.round(e.iterations / e.total * 100); console.log(`Stabilizing: ${t}%`) })), network.on("stabilizationIterationsDone", (function () { console.log("Stabilization complete"), minimapNetwork && updateMinimap() }))) } function showNodeDetails(e) { nodeDetails.style.display = "block"; let t = ""; switch (e.type) { case "host": t = `\n                        <dl>\n                            <dt>IP Address:</dt>\n                            <dd>${e.ip}</dd>\n                            ${e.hostname ? `<dt>Hostname:</dt><dd>${e.hostname}</dd>` : ""}\n                            <dt>Open Ports:</dt>\n                            <dd>${e.ports} port(s)</dd>\n                        </dl>\n                        <h4>Ports:</h4>\n                        <ul>\n                    `, e.original.ports.forEach((e => { t += `<li>${e.port}/${e.protocol} (${e.service}) - ${e.state}</li>` })), t += "</ul>"; break; case "service": t = `\n                        <dl>\n                            <dt>Service:</dt>\n                            <dd>${e.service}</dd>\n                            <dt>Status:</dt>\n                            <dd>${e.uncertain ? "Uncertain" : "Confirmed"}</dd>\n                            ${e.tls ? "<dt>Security:</dt><dd>TLS Enabled</dd>" : ""}\n                        </dl>\n                        <h4>Connected Hosts:</h4>\n                        <ul>\n                    `; getConnectedHosts(e.id).forEach((e => { const n = nodesDataset.get(e); t += `<li>${n.ip}${n.hostname ? ` (${n.hostname})` : ""}</li>` })), t += "</ul>"; break; case "up-host": t = `\n                        <dl>\n                            <dt>IP Address:</dt>\n                            <dd>${e.ip}</dd>\n                            <dt>Status:</dt>\n                            <dd>Up (no open ports)</dd>\n                            <dt>Reason:</dt>\n                            <dd>${e.reason}</dd>\n                        </dl>\n                    ` }document.getElementById("pin-node").textContent = pinnedNodes.has(e.id) ? "Unpin Node" : "Pin Node", nodeDetailsContent.innerHTML = t } function setupEventHandlers() { document.getElementById("pin-node").addEventListener("click", (function () { if (selectedNode) if (pinnedNodes.has(selectedNode.id)) { pinnedNodes.delete(selectedNode.id), this.textContent = "Pin Node"; const e = { ...selectedNode }; delete e.fixed, nodesDataset.update(e) } else { pinnedNodes.add(selectedNode.id), this.textContent = "Unpin Node"; const e = network.getPositions([selectedNode.id])[selectedNode.id]; nodesDataset.update({ id: selectedNode.id, fixed: { x: !0, y: !0 }, x: e.x, y: e.y }) } })), document.getElementById("focus-node").addEventListener("click", (function () { selectedNode && network.focus(selectedNode.id, { scale: 1.5, animation: !0 }) })), document.getElementById("apply-filters").addEventListener("click", applyFilters), document.getElementById("reset-filters").addEventListener("click", resetFilters), document.getElementById("toggle-minimap").addEventListener("click", (function () { const e = document.getElementById("graph-minimap"); "none" === e.style.display ? (e.style.display = "block", updateMinimap()) : e.style.display = "none" })), document.getElementById("toggle-physics").addEventListener("click", (function () { physicsEnabled = !physicsEnabled, network.setOptions({ physics: { enabled: physicsEnabled } }), this.textContent = physicsEnabled ? "Disable Physics" : "Enable Physics" })), document.getElementById("fit-graph").addEventListener("click", (function () { network.fit({ animation: !0 }) })), document.getElementById("export-png").addEventListener("click", exportNetworkImage), document.getElementById("save-view").addEventListener("click", saveCurrentView), document.getElementById("run-analysis").addEventListener("click", runAnalysis), document.getElementById("node-size").addEventListener("input", (function () { network.setOptions({ nodes: { size: parseInt(this.value) } }) })), document.querySelectorAll('input[name="layout"]').forEach((e => { e.addEventListener("change", (function () { const e = network.getPositions(); network.setOptions({ layout: getSelectedLayout() }), "hierarchical" !== this.value && pinnedNodes.forEach((t => { e[t] && nodesDataset.update({ id: t, fixed: { x: !0, y: !0 }, x: e[t].x, y: e[t].y }) })) })) })), document.getElementById("show-up-hosts").addEventListener("change", refreshGraph), document.getElementById("show-uncertain").addEventListener("change", applyFilters), document.getElementById("highlight-tls").addEventListener("change", highlightTlsServices) } function initializeMinimap(e, t) { const n = document.getElementById("graph-minimap"), o = e.map((e => ({ id: e.id, group: e.group }))), s = t.map((e => ({ from: e.from, to: e.to }))), r = { nodes: new vis.DataSet(o), edges: new vis.DataSet(s) }; minimapNetwork = new vis.Network(n, r, { nodes: { shape: "dot", size: 3, font: { size: 0 }, borderWidth: 1 }, edges: { width: 1, smooth: !1 }, interaction: { dragNodes: !1, dragView: !1, zoomView: !1, selectable: !1, tooltipDelay: 0 }, physics: { enabled: !1 }, groups: { host: { color: "#3498db" }, service: { color: "#2ecc71" }, "up-only": { color: "#e67e22" }, pinned: { color: "#9b59b6" } } }), minimapNetwork.once("afterDrawing", (function () { updateMinimap() })) } function updateMinimap() { if (!minimapNetwork || !network) return; const e = network.getScale(), t = network.getViewPosition(); minimapNetwork.moveTo({ position: t, scale: .2 * e, animation: !1 }) } function applyFilters() { const e = document.getElementById("service-filter").value, t = parseInt(document.getElementById("port-min").value) || 1, n = parseInt(document.getElementById("port-max").value) || 65535, o = document.getElementById("subnet-filter").value.trim(), s = document.getElementById("show-uncertain").checked; if (filteredItems.hosts.clear(), filteredItems.services.clear(), filteredItems.nodes.clear(), filteredItems.edges.clear(), "all" !== e) { nodesDataset.get({ filter: t => "service" === t.type && t.service === e }).forEach((e => { filteredItems.services.add(e.id); getConnectedHosts(e.id).forEach((e => { filteredItems.hosts.add(e) })) })) } (t > 1 || n < 65535) && scanData.hosts.forEach((e => { const o = e.ports.filter((e => { const o = parseInt(e.port); return o >= t && o <= n })); if (o.length > 0) { const t = nodesDataset.get({ filter: t => "host" === t.type && t.ip === e.ip })[0]; t && (filteredItems.hosts.add(t.id), o.forEach((e => { const t = e.service.replace("?", ""), n = nodesDataset.get({ filter: e => "service" === e.type && e.service === t })[0]; n && filteredItems.services.add(n.id) }))) } })), o && nodesDataset.get({ filter: e => ("host" === e.type || "up-host" === e.type) && e.ip && e.ip.startsWith(o) }).forEach((e => { if ("host" === e.type) { filteredItems.hosts.add(e.id); getConnectedServices(e.id).forEach((e => { filteredItems.services.add(e) })) } else filteredItems.nodes.add(e.id) })), s || nodesDataset.get({ filter: e => "service" === e.type && e.uncertain }).forEach((e => { filteredItems.nodes.add(e.id) })), refreshGraph() } function resetFilters() { document.getElementById("service-filter").value = "all", document.getElementById("port-min").value = "1", document.getElementById("port-max").value = "65535", document.getElementById("subnet-filter").value = "", document.getElementById("show-up-hosts").checked = !0, document.getElementById("show-uncertain").checked = !0, document.getElementById("highlight-tls").checked = !0, filteredItems.hosts.clear(), filteredItems.services.clear(), filteredItems.nodes.clear(), filteredItems.edges.clear(), refreshGraph() } function refreshGraph() { network && (network.destroy(), network = null), minimapNetwork && (minimapNetwork.destroy(), minimapNetwork = null), renderGraph() } function highlightTlsServices() { const e = document.getElementById("highlight-tls").checked; nodesDataset.get({ filter: e => "service" === e.type && e.tls }).forEach((t => { nodesDataset.update({ id: t.id, color: e ? { border: "#e74c3c", background: "#e74c3c", highlight: { border: "#c0392b", background: "#e74c3c" } } : null }) })) } function highlightConnections(e) { nodesDataset.update(nodesDataset.get().map((e => ({ id: e.id, color: void 0, font: void 0 })))), edgesDataset.update(edgesDataset.get().map((e => ({ id: e.id, color: void 0, width: e.originalWidth || e.width })))); const t = nodesDataset.get(e), n = new Set, o = new Set; "host" === t.type ? edgesDataset.get({ filter: t => t.from === e }).forEach((e => { n.add(e.to), o.add(e.id) })) : "service" === t.type && edgesDataset.get({ filter: t => t.to === e }).forEach((e => { n.add(e.from), o.add(e.id) })), nodesDataset.update({ id: e, color: { border: "#8e44ad", background: "#9b59b6" }, font: { color: "#000000", bold: !0 } }), n.forEach((e => { nodesDataset.update({ id: e, color: { border: "#16a085", background: "#1abc9c" }, font: { bold: !0 } }) })), o.forEach((e => { const t = edgesDataset.get(e); edgesDataset.update({ id: e, color: "#16a085", width: 2 * (t.width || 1), originalWidth: t.width || 1 }) })) } function getConnectedHosts(e) { return edgesDataset.get({ filter: t => t.to === e }).map((e => e.from)) } function getConnectedServices(e) { return edgesDataset.get({ filter: t => t.from === e }).map((e => e.to)) } function countServiceInstances(e) { let t = 0; return scanData.hosts.forEach((n => { n.ports.forEach((n => { n.service.replace("?", "") === e && t++ })) })), t } function processSubnets() { subnetGroups = {}, scanData.hosts.forEach((e => { const t = getSubnet(e.ip); subnetGroups[t] || (subnetGroups[t] = { hosts: new Set, services: new Set }), subnetGroups[t].hosts.add(e.ip), e.ports.forEach((e => { subnetGroups[t].services.add(e.service.replace("?", "")) })) })), scanData.hostsUp && scanData.hostsUp.forEach((e => { const t = getSubnet(e.ip); subnetGroups[t] || (subnetGroups[t] = { hosts: new Set, services: new Set }), subnetGroups[t].hosts.add(e.ip) })) } function getSubnet(e) { const t = e.split("."); return 4 === t.length ? `${t[0]}.${t[1]}.${t[2]}` : e } function getSubnetGroup(e) { return getSubnet(e) } function formatNodeTooltip(e) { let t = `<strong>${e.ip}</strong>`; return e.hostname && (t += `<br>${e.hostname}`), t += `<br>Open Ports: ${e.ports.length}`, e.ports.length > 0 && (t += "<br><br><strong>Ports:</strong><br>", e.ports.slice(0, 5).forEach((e => { t += `${e.port}/${e.protocol} (${e.service})${e.comment ? ` - ${e.comment}` : ""}<br>` })), e.ports.length > 5 && (t += `... and ${e.ports.length - 5} more`)), t } function formatEdgeTooltip(e) { let t = "<strong>Ports:</strong><br>"; return e.forEach((e => { t += `${e.port}/${e.protocol} (${e.service})${e.comment ? ` - ${e.comment}` : ""}<br>` })), t } function showTooltip(e, t, n = !1, o = null) { const s = document.getElementById("graph-tooltip"); let r = ""; if (n && o) r = o.title || "Connection"; else { const t = nodesDataset.get(e); t && (r = t.title || t.label) } r && (s.innerHTML = r, s.style.left = `${t.x + 10}px`, s.style.top = `${t.y + 10}px`, s.style.display = "block") } function hideTooltip() { document.getElementById("graph-tooltip").style.display = "none" } function exportNetworkImage() { if (!network) return; const e = network.canvas.frame.canvas, t = document.createElement("a"); t.download = "unitas-network.png", t.href = e.toDataURL("image/png").replace("image/png", "image/octet-stream"), document.body.appendChild(t), t.click(), document.body.removeChild(t) } function saveCurrentView() { if (!network) return; const e = prompt("Enter a name for this view:"); e && (savedViews[e] = { position: network.getViewPosition(), scale: network.getScale(), pinnedNodes: Array.from(pinnedNodes), filter: { service: document.getElementById("service-filter").value, portMin: document.getElementById("port-min").value, portMax: document.getElementById("port-max").value, subnet: document.getElementById("subnet-filter").value, showUpHosts: document.getElementById("show-up-hosts").checked, showUncertain: document.getElementById("show-uncertain").checked, highlightTls: document.getElementById("highlight-tls").checked } }, alert(`View "${e}" saved successfully!`)) } function runAnalysis() { const e = document.getElementById("analysis-type").value, t = document.getElementById("analysis-result"), n = document.getElementById("analysis-content"); if ("none" === e) return void t.classList.add("hidden"); t.classList.remove("hidden"); let o = ""; switch (e) { case "common-services": o = findCommonServices(); break; case "segments": o = identifyNetworkSegments(); break; case "unusual": o = findUnusualPorts(); break; case "connectivity": o = findMostConnectedHosts() }n.innerHTML = o } function findCommonServices() { const e = {}; scanData.hosts.forEach((t => { const n = new Set; t.ports.forEach((e => { const t = e.service.replace("?", ""); n.add(t) })), n.forEach((t => { e[t] = (e[t] || 0) + 1 })) })); const t = Object.entries(e).sort(((e, t) => t[1] - e[1])).filter((([e, t]) => t > 1)); if (0 === t.length) return "<p>No common services found across multiple hosts.</p>"; let n = "<p>Services found on multiple hosts:</p><ul>"; return t.forEach((([e, t]) => { const o = Math.round(t / scanData.hosts.length * 100); n += `<li><strong>${e}</strong>: Found on ${t} hosts (${o}%)</li>` })), n += "</ul>", n } function identifyNetworkSegments() { let e = "<p>Identified network segments:</p><ul>"; return Object.entries(subnetGroups).sort(((e, t) => t[1].hosts.size - e[1].hosts.size)).forEach((([t, n]) => { if (e += `<li><strong>${t}.0/24</strong>: ${n.hosts.size} hosts`, n.services.size > 0) { e += `, ${n.services.size} services`; const t = Array.from(n.services).slice(0, 3); t.length > 0 && (e += ` (${t.join(", ")}${n.services.size > 3 ? "..." : ""})`) } e += "</li>" })), e += "</ul>", e } function findUnusualPorts() { const e = {}, t = [], n = []; scanData.hosts.forEach((o => { o.ports.forEach((s => { const r = parseInt(s.port); e[r] = (e[r] || 0) + 1, r > 1e4 && t.push({ ip: o.ip, hostname: o.hostname, port: s.port, protocol: s.protocol, service: s.service }); const i = { http: [80, 8080], https: [443, 8443], ssh: [22], ftp: [21], smtp: [25], dns: [53], rdp: [3389] }, a = s.service.replace("?", ""); i[a] && !i[a].includes(r) && n.push({ ip: o.ip, hostname: o.hostname, port: s.port, protocol: s.protocol, service: s.service, standardPorts: i[a].join(", ") }) })) })); const o = Object.entries(e).filter((([e, t]) => 1 === t)).map((([e]) => parseInt(e))).sort(((e, t) => e - t)); let s = ""; return t.length > 0 && (s += "<p><strong>Unusual high ports (>10000):</strong></p><ul>", t.slice(0, 10).forEach((e => { s += `<li>${e.ip} - ${e.port}/${e.protocol} (${e.service})</li>` })), t.length > 10 && (s += `<li>...and ${t.length - 10} more</li>`), s += "</ul>"), n.length > 0 && (s += "<p><strong>Services on non-standard ports:</strong></p><ul>", n.forEach((e => { s += `<li>${e.ip} - ${e.service} on port ${e.port} (standard: ${e.standardPorts})</li>` })), s += "</ul>"), o.length > 0 && (s += "<p><strong>Uncommon ports (found on only one host):</strong></p>", s += `<p>${o.slice(0, 20).join(", ")}${o.length > 20 ? "..." : ""}</p>`), "" === s && (s = "<p>No unusual ports detected.</p>"), s } function findMostConnectedHosts() { const e = {}; scanData.hosts.forEach((t => { e[t.ip] = { ip: t.ip, hostname: t.hostname, ports: t.ports.length, services: new Set(t.ports.map((e => e.service.replace("?", "")))).size } })); const t = Object.values(e).sort(((e, t) => t.ports - e.ports)); let n = "<p><strong>Hosts by connectivity (number of open ports):</strong></p><ul>"; return t.slice(0, 10).forEach((e => { n += `<li><strong>${e.ip}</strong>${e.hostname ? ` (${e.hostname})` : ""}: ${e.ports} ports, ${e.services} unique services</li>` })), t.length > 10 && (n += `<li>...and ${t.length - 10} more hosts</li>`), n += "</ul>", n } ["dragenter", "dragover", "dragleave", "drop"].forEach((e => { dropArea.addEventListener(e, preventDefaults, !1) })), ["dragenter", "dragover"].forEach((e => { dropArea.addEventListener(e, highlight, !1) })), ["dragleave", "drop"].forEach((e => { dropArea.addEventListener(e, unhighlight, !1) })), dropArea.addEventListener("drop", handleDrop, !1), fileInput.addEventListener("change", (function () { 1 === this.files.length ? handleFile(this.files[0]) : showError("Please select a single JSON file.") })), reloadBtn.addEventListener("click", (function () { initialScreen.classList.remove("hidden"), dataView.classList.add("hidden"), errorMessage.classList.add("hidden"), fileInput.value = "", scanData = null, network && (network.destroy(), network = null), minimapNetwork && (minimapNetwork.destroy(), minimapNetwork = null), pinnedNodes.clear(), filteredItems.hosts.clear(), filteredItems.services.clear(), filteredItems.nodes.clear(), filteredItems.edges.clear() }))</script>
+    <script>
+        let scanData = null,
+            network = null,
+            nodesDataset = null,
+            edgesDataset = null,
+            pinnedNodes = new Set,
+            filteredItems = {
+                hosts: new Set,
+                services: new Set,
+                nodes: new Set,
+                edges: new Set
+            },
+            serviceTypes = new Set,
+            minimapNetwork = null,
+            physicsEnabled = !0,
+            selectedNode = null,
+            savedViews = {},
+            subnetGroups = {};
+        const initialScreen = document.getElementById("initial-screen"),
+            dataView = document.getElementById("data-view"),
+            dropArea = document.getElementById("drop-area"),
+            fileInput = document.getElementById("file-input"),
+            errorMessage = document.getElementById("error-message"),
+            reloadBtn = document.getElementById("reload-btn"),
+            loadingOverlay = document.getElementById("loading-overlay"),
+            nodeDetails = document.getElementById("node-details"),
+            nodeDetailsContent = document.getElementById("node-details-content"),
+            graphMinimap = document.getElementById("graph-minimap"),
+            graphTooltip = document.getElementById("graph-tooltip");
+
+        function preventDefaults(e) {
+            e.preventDefault(), e.stopPropagation()
+        }
+
+        function highlight() {
+            dropArea.classList.add("highlight")
+        }
+
+        function unhighlight() {
+            dropArea.classList.remove("highlight")
+        }
+
+        function handleDrop(e) {
+            const t = e.dataTransfer.files;
+            1 === t.length ? handleFile(t[0]) : showError("Please drop a single JSON file.")
+        }
+
+        function showError(e) {
+            errorMessage.textContent = e, errorMessage.classList.remove("hidden")
+        }
+
+        function handleFile(e) {
+            if (!e.name.endsWith(".json")) return void showError("Please select a JSON file (.json)");
+            showLoading();
+            const t = new FileReader;
+            t.onload = function (e) {
+                try {
+                    scanData = JSON.parse(e.target.result), validateAndDisplayData(scanData)
+                } catch (e) {
+                    console.error("Error parsing JSON:", e), showError("Invalid JSON file. Please select a valid Unitas export file."), hideLoading()
+                }
+            }, t.onerror = function () {
+                showError("Error reading file"), hideLoading()
+            }, t.readAsText(e)
+        }
+
+        function validateAndDisplayData(e) {
+            if (!e.hosts || !Array.isArray(e.hosts)) return showError("Invalid data format: Missing hosts array"), void hideLoading();
+            initialScreen.classList.add("hidden"), dataView.classList.remove("hidden"), errorMessage.classList.add("hidden"), e.metadata ? (document.getElementById("scan-date").textContent = `Generated: ${e.metadata.generated || "Unknown"}`, document.getElementById("scan-version").textContent = `Unitas ${e.metadata.version || "Unknown"}`) : (document.getElementById("scan-date").textContent = "Generated: Unknown", document.getElementById("scan-version").textContent = "Unitas Unknown"), updateStats(), populateServiceFilter(), renderGraph(), setupEventHandlers(), hideLoading()
+        }
+
+        function showLoading() {
+            loadingOverlay.style.display = "flex"
+        }
+
+        function hideLoading() {
+            loadingOverlay.style.display = "none"
+        }
+
+        function updateStats() {
+            if (!scanData) return;
+            document.getElementById("total-hosts").textContent = scanData.hosts.length;
+            let e = 0;
+            scanData.hosts.forEach((t => {
+                e += t.ports.length
+            })), document.getElementById("total-ports").textContent = e, document.getElementById("up-hosts").textContent = scanData.hostsUp ? scanData.hostsUp.length : 0, serviceTypes.clear(), scanData.hosts.forEach((e => {
+                e.ports.forEach((e => {
+                    const t = e.service.replace("?", "");
+                    serviceTypes.add(t)
+                }))
+            })), document.getElementById("services-count").textContent = serviceTypes.size
+        }
+
+        function populateServiceFilter() {
+            const e = document.getElementById("service-filter");
+            e.innerHTML = '<option value="all">All Services</option>', Array.from(serviceTypes).sort().forEach((t => {
+                const n = document.createElement("option");
+                n.value = t, n.textContent = t, e.appendChild(n)
+            }))
+        }
+
+        function renderGraph() {
+            if (!scanData) return;
+            const e = document.getElementById("graph-container"),
+                {
+                    nodes: t,
+                    edges: n
+                } = createGraphData();
+            nodesDataset = new vis.DataSet(t), edgesDataset = new vis.DataSet(n);
+            const o = {
+                nodes: nodesDataset,
+                edges: edgesDataset
+            },
+                s = createGraphOptions();
+            network = new vis.Network(e, o, s), setupNetworkEvents(), initializeMinimap(t, n)
+        }
+
+        // Update this part in the createGraphData function where nodes are created
+        function createGraphData() {
+            const nodes = [], edges = [];
+            let nextId = 1;
+            const nodeIdMap = {}, servicesMap = new Map();
+
+            processSubnets();
+
+            // Process hosts
+            scanData.hosts.forEach((host) => {
+                const hostId = nextId++;
+                nodeIdMap[host.ip] = hostId;
+
+                // Calculate value based on number of ports (for sizing)
+                const portCount = host.ports.length;
+
+                nodes.push({
+                    id: hostId,
+                    label: host.hostname || host.ip,
+                    title: formatNodeTooltip(host),
+                    group: "host",
+                    subnetGroup: getSubnetGroup(host.ip),
+                    type: "host",
+                    ip: host.ip,
+                    hostname: host.hostname,
+                    // Store value for sizing, ensure it's numeric
+                    value: Math.max(10, Math.min(30, 10 + 2 * portCount)),
+                    ports: portCount,
+                    original: host
+                });
+
+                // Process services on this host
+                const hostServices = {};
+
+                host.ports.forEach((port) => {
+                    const serviceName = port.service.replace("?", "");
+
+                    if (!hostServices[serviceName]) {
+                        hostServices[serviceName] = [];
+                    }
+                    hostServices[serviceName].push(port);
+                });
+
+                // Create edges between host and services
+                Object.entries(hostServices).forEach(([serviceName, ports]) => {
+                    let serviceId;
+
+                    if (servicesMap.has(serviceName)) {
+                        serviceId = servicesMap.get(serviceName);
+                    } else {
+                        serviceId = nextId++;
+                        servicesMap.set(serviceName, serviceId);
+
+                        // Count total instances of this service
+                        const serviceInstances = countServiceInstances(serviceName);
+
+                        nodes.push({
+                            id: serviceId,
+                            label: serviceName,
+                            title: `<strong>${serviceName}</strong><br>Instances: ${serviceInstances}`,
+                            group: "service",
+                            type: "service",
+                            // Ensure value is numeric
+                            value: Math.max(8, Math.min(25, 8 + serviceInstances)),
+                            service: serviceName,
+                            uncertain: ports.some(p => p.service.includes("?") || p.uncertain),
+                            tls: ports.some(p => p.comment.includes("TLS") || p.tls)
+                        });
+                    }
+
+                    edges.push({
+                        from: hostId,
+                        to: serviceId,
+                        title: formatEdgeTooltip(ports),
+                        // Ensure width is numeric
+                        width: Math.max(1, Math.min(5, Math.sqrt(2 * ports.length))),
+                        arrows: { to: { enabled: false } },
+                        color: { color: "#999", highlight: "#3498db" },
+                        smooth: { type: "continuous" },
+                        ports: ports
+                    });
+                });
+            });
+
+            // Add hosts that are up but have no open ports
+            if (scanData.hostsUp && document.getElementById("show-up-hosts").checked) {
+                scanData.hostsUp.forEach((host) => {
+                    nodes.push({
+                        id: nextId++,
+                        label: host.ip,
+                        title: `<strong>${host.ip}</strong><br>Up: ${host.reason}`,
+                        group: "up-only",
+                        type: "up-host",
+                        ip: host.ip,
+                        reason: host.reason,
+                        // Make sure to include a value for these nodes too
+                        value: 8,
+                        subnetGroup: getSubnetGroup(host.ip)
+                    });
+                });
+            }
+
+            return { nodes, edges };
+        }
+        function createGraphOptions() {
+            const nodeSize = parseInt(document.getElementById("node-size").value);
+
+            return {
+                nodes: {
+                    shape: "dot",
+                    // Use a scaling function instead of directly setting size
+                    scaling: {
+                        min: Math.max(5, nodeSize - 10),
+                        max: nodeSize + 10,
+                        label: {
+                            enabled: true,
+                            min: 14,
+                            max: 24
+                        }
+                    },
+                    font: { size: 14 },
+                    borderWidth: 2,
+                    shadow: true
+                },
+                edges: {
+                    width: 2,
+                    shadow: true,
+                    smooth: { type: "continuous" }
+                },
+                groups: {
+                    host: {
+                        color: { border: "#2980b9", background: "#3498db", highlight: { border: "#2980b9", background: "#5DADF5" } },
+                        shape: "dot"
+                    },
+                    service: {
+                        color: { border: "#27ae60", background: "#2ecc71", highlight: { border: "#27ae60", background: "#58D88D" } },
+                        shape: "hexagon"
+                    },
+                    "up-only": {
+                        color: { border: "#d35400", background: "#e67e22", highlight: { border: "#d35400", background: "#EB9950" } },
+                        shape: "diamond"
+                    },
+                    pinned: {
+                        color: { border: "#8e44ad", background: "#9b59b6", highlight: { border: "#8e44ad", background: "#ac6fc6" } },
+                        fixed: true
+                    }
+                },
+                physics: {
+                    enabled: physicsEnabled,
+                    stabilization: true,
+                    barnesHut: {
+                        gravitationalConstant: -10000,
+                        springConstant: 0.002,
+                        springLength: 150
+                    }
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 200,
+                    hideEdgesOnDrag: true,
+                    multiselect: true,
+                    navigationButtons: true
+                },
+                layout: getSelectedLayout()
+            };
+        }
+
+        function getSelectedLayout() {
+            switch (document.querySelector('input[name="layout"]:checked').value) {
+                case "hierarchical":
+                    return {
+                        hierarchical: {
+                            direction: "UD",
+                            sortMethod: "directed",
+                            nodeSpacing: 150,
+                            levelSeparation: 150
+                        }
+                    };
+                case "circular":
+                    return {
+                        improvedLayout: !0, randomSeed: 42
+                    };
+                default:
+                    return {
+                        improvedLayout: !0
+                    }
+            }
+        }
+
+        function setupNetworkEvents() {
+            network && (network.on("click", (function (e) {
+                if (0 === e.nodes.length) return nodeDetails.style.display = "none", void (selectedNode = null);
+                selectedNode = nodesDataset.get(e.nodes[0]), showNodeDetails(selectedNode), highlightConnections(e.nodes[0])
+            })), network.on("doubleClick", (function (e) {
+                1 === e.nodes.length && network.focus(e.nodes[0], {
+                    scale: 1.2,
+                    animation: !0
+                })
+            })), network.on("hoverNode", (function (e) {
+                showTooltip(e.node, e.event.center)
+            })), network.on("blurNode", (function () {
+                hideTooltip()
+            })), network.on("hoverEdge", (function (e) {
+                const t = edgesDataset.get(e.edge);
+                showTooltip(e.edge, e.event.center, !0, t)
+            })), network.on("blurEdge", (function () {
+                hideTooltip()
+            })), network.on("stabilizationProgress", (function (e) {
+                const t = Math.round(e.iterations / e.total * 100);
+                console.log(`Stabilizing: ${t}%`)
+            })), network.on("stabilizationIterationsDone", (function () {
+                console.log("Stabilization complete"), minimapNetwork && updateMinimap()
+            })))
+        }
+
+        function showNodeDetails(e) {
+            nodeDetails.style.display = "block";
+            let t = "";
+            switch (e.type) {
+                case "host":
+                    t = `\n                        <dl>\n                            <dt>IP Address:</dt>\n                            <dd>${e.ip}</dd>\n                            ${e.hostname ? `<dt>Hostname:</dt><dd>${e.hostname}</dd>` : ""}\n                            <dt>Open Ports:</dt>\n                            <dd>${e.ports} port(s)</dd>\n                        </dl>\n                        <h4>Ports:</h4>\n                        <ul>\n                    `, e.original.ports.forEach((e => {
+                        t += `<li>${e.port}/${e.protocol} (${e.service}) - ${e.state}</li>`
+                    })), t += "</ul>";
+                    break;
+                case "service":
+                    t = `\n                        <dl>\n                            <dt>Service:</dt>\n                            <dd>${e.service}</dd>\n                            <dt>Status:</dt>\n                            <dd>${e.uncertain ? "Uncertain" : "Confirmed"}</dd>\n                            ${e.tls ? "<dt>Security:</dt><dd>TLS Enabled</dd>" : ""}\n                        </dl>\n                        <h4>Connected Hosts:</h4>\n                        <ul>\n                    `;
+                    getConnectedHosts(e.id).forEach((e => {
+                        const n = nodesDataset.get(e);
+                        t += `<li>${n.ip}${n.hostname ? ` (${n.hostname})` : ""}</li>`
+                    })), t += "</ul>";
+                    break;
+                case "up-host":
+                    t = `\n                        <dl>\n                            <dt>IP Address:</dt>\n                            <dd>${e.ip}</dd>\n                            <dt>Status:</dt>\n                            <dd>Up (no open ports)</dd>\n                            <dt>Reason:</dt>\n                            <dd>${e.reason}</dd>\n                        </dl>\n                    `
+            }
+            document.getElementById("pin-node").textContent = pinnedNodes.has(e.id) ? "Unpin Node" : "Pin Node", nodeDetailsContent.innerHTML = t
+        }
+
+        function setupEventHandlers() {
+            document.getElementById("pin-node").addEventListener("click", (function () {
+                if (selectedNode)
+                    if (pinnedNodes.has(selectedNode.id)) {
+                        pinnedNodes.delete(selectedNode.id), this.textContent = "Pin Node";
+                        const e = {
+                            ...selectedNode
+                        };
+                        delete e.fixed, nodesDataset.update(e)
+                    } else {
+                        pinnedNodes.add(selectedNode.id), this.textContent = "Unpin Node";
+                        const e = network.getPositions([selectedNode.id])[selectedNode.id];
+                        nodesDataset.update({
+                            id: selectedNode.id,
+                            fixed: {
+                                x: !0,
+                                y: !0
+                            },
+                            x: e.x,
+                            y: e.y
+                        })
+                    }
+            })), document.getElementById("focus-node").addEventListener("click", (function () {
+                selectedNode && network.focus(selectedNode.id, {
+                    scale: 1.5,
+                    animation: !0
+                })
+            })), document.getElementById("apply-filters").addEventListener("click", applyFilters), document.getElementById("reset-filters").addEventListener("click", resetFilters), document.getElementById("toggle-minimap").addEventListener("click", (function () {
+                const e = document.getElementById("graph-minimap");
+                "none" === e.style.display ? (e.style.display = "block", updateMinimap()) : e.style.display = "none"
+            })), document.getElementById("toggle-physics").addEventListener("click", (function () {
+                physicsEnabled = !physicsEnabled, network.setOptions({
+                    physics: {
+                        enabled: physicsEnabled
+                    }
+                }), this.textContent = physicsEnabled ? "Disable Physics" : "Enable Physics"
+            })), document.getElementById("fit-graph").addEventListener("click", (function () {
+                network.fit({
+                    animation: !0
+                })
+            })), document.getElementById("export-png").addEventListener("click", exportNetworkImage), document.getElementById("save-view").addEventListener("click", saveCurrentView), document.getElementById("run-analysis").addEventListener("click", runAnalysis), document.getElementById("node-size").addEventListener("input", (function () {
+                network.setOptions({
+                    nodes: {
+                        size: parseInt(this.value)
+                    }
+                })
+            })), document.querySelectorAll('input[name="layout"]').forEach((e => {
+                e.addEventListener("change", (function () {
+                    const e = network.getPositions();
+                    network.setOptions({
+                        layout: getSelectedLayout()
+                    }), "hierarchical" !== this.value && pinnedNodes.forEach((t => {
+                        e[t] && nodesDataset.update({
+                            id: t,
+                            fixed: {
+                                x: !0,
+                                y: !0
+                            },
+                            x: e[t].x,
+                            y: e[t].y
+                        })
+                    }))
+                }))
+            })), document.getElementById("show-up-hosts").addEventListener("change", refreshGraph), document.getElementById("show-uncertain").addEventListener("change", applyFilters), document.getElementById("highlight-tls").addEventListener("change", highlightTlsServices)
+        }
+
+        function initializeMinimap(e, t) {
+            const n = document.getElementById("graph-minimap"),
+                o = e.map((e => ({
+                    id: e.id,
+                    group: e.group
+                }))),
+                s = t.map((e => ({
+                    from: e.from,
+                    to: e.to
+                }))),
+                r = {
+                    nodes: new vis.DataSet(o),
+                    edges: new vis.DataSet(s)
+                };
+            minimapNetwork = new vis.Network(n, r, {
+                nodes: {
+                    shape: "dot",
+                    size: 3,
+                    font: {
+                        size: 0
+                    },
+                    borderWidth: 1
+                },
+                edges: {
+                    width: 1,
+                    smooth: !1
+                },
+                interaction: {
+                    dragNodes: !1,
+                    dragView: !1,
+                    zoomView: !1,
+                    selectable: !1,
+                    tooltipDelay: 0
+                },
+                physics: {
+                    enabled: !1
+                },
+                groups: {
+                    host: {
+                        color: "#3498db"
+                    },
+                    service: {
+                        color: "#2ecc71"
+                    },
+                    "up-only": {
+                        color: "#e67e22"
+                    },
+                    pinned: {
+                        color: "#9b59b6"
+                    }
+                }
+            }), minimapNetwork.once("afterDrawing", (function () {
+                updateMinimap()
+            }))
+        }
+
+        function updateMinimap() {
+            if (!minimapNetwork || !network) return;
+            const e = network.getScale(),
+                t = network.getViewPosition();
+            minimapNetwork.moveTo({
+                position: t,
+                scale: .2 * e,
+                animation: !1
+            })
+        }
+
+        // Updated applyFilters function
+        function applyFilters() {
+            const serviceFilter = document.getElementById("service-filter").value;
+            const portMin = parseInt(document.getElementById("port-min").value) || 1;
+            const portMax = parseInt(document.getElementById("port-max").value) || 65535;
+            const subnetFilter = document.getElementById("subnet-filter").value.trim();
+            const showUncertain = document.getElementById("show-uncertain").checked;
+
+            // Clear previous filter results
+            filteredItems.hosts.clear();
+            filteredItems.services.clear();
+            filteredItems.nodes.clear();
+            filteredItems.edges.clear();
+
+            // Filter by service
+            if (serviceFilter !== "all") {
+                const serviceNodes = nodesDataset.get({
+                    filter: node => node.type === "service" && node.service === serviceFilter
+                });
+
+                serviceNodes.forEach(node => {
+                    filteredItems.services.add(node.id);
+
+                    // Add connected hosts to the filter list
+                    getConnectedHosts(node.id).forEach(hostId => {
+                        filteredItems.hosts.add(hostId);
+                    });
+                });
+            }
+
+            // Filter by port range
+            if (portMin > 1 || portMax < 65535) {
+                scanData.hosts.forEach(host => {
+                    const portsInRange = host.ports.filter(port => {
+                        const portNumber = parseInt(port.port);
+                        return portNumber >= portMin && portNumber <= portMax;
+                    });
+
+                    if (portsInRange.length > 0) {
+                        const hostNodes = nodesDataset.get({
+                            filter: node => node.type === "host" && node.ip === host.ip
+                        });
+
+                        if (hostNodes.length > 0) {
+                            const hostNode = hostNodes[0];
+                            filteredItems.hosts.add(hostNode.id);
+
+                            // Add connected services to filter list
+                            portsInRange.forEach(port => {
+                                const serviceName = port.service.replace("?", "");
+                                const serviceNodes = nodesDataset.get({
+                                    filter: node => node.type === "service" && node.service === serviceName
+                                });
+
+                                if (serviceNodes.length > 0) {
+                                    filteredItems.services.add(serviceNodes[0].id);
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
+            // Filter by subnet
+            if (subnetFilter) {
+                const filteredNodes = nodesDataset.get({
+                    filter: node =>
+                        (node.type === "host" || node.type === "up-host") &&
+                        node.ip &&
+                        node.ip.startsWith(subnetFilter)
+                });
+
+                filteredNodes.forEach(node => {
+                    if (node.type === "host") {
+                        filteredItems.hosts.add(node.id);
+
+                        // Add connected services
+                        getConnectedServices(node.id).forEach(serviceId => {
+                            filteredItems.services.add(serviceId);
+                        });
+                    } else {
+                        filteredItems.nodes.add(node.id);
+                    }
+                });
+            }
+
+            // Filter uncertain services
+            if (!showUncertain) {
+                const uncertainServices = nodesDataset.get({
+                    filter: node => node.type === "service" && node.uncertain
+                });
+
+                uncertainServices.forEach(node => {
+                    filteredItems.nodes.add(node.id);
+                });
+            }
+
+            // Apply filters by refreshing the graph
+            refreshGraph();
+        }
+
+        // Updated resetFilters function
+        function resetFilters() {
+            // Reset form elements
+            document.getElementById("service-filter").value = "all";
+            document.getElementById("port-min").value = "1";
+            document.getElementById("port-max").value = "65535";
+            document.getElementById("subnet-filter").value = "";
+            document.getElementById("show-up-hosts").checked = true;
+            document.getElementById("show-uncertain").checked = true;
+            document.getElementById("highlight-tls").checked = true;
+
+            // Clear filter sets
+            filteredItems.hosts.clear();
+            filteredItems.services.clear();
+            filteredItems.nodes.clear();
+            filteredItems.edges.clear();
+
+            // Refresh the graph with no filters
+            refreshGraph();
+        }
+
+        function resetFilters() {
+            document.getElementById("service-filter").value = "all", document.getElementById("port-min").value = "1", document.getElementById("port-max").value = "65535", document.getElementById("subnet-filter").value = "", document.getElementById("show-up-hosts").checked = !0, document.getElementById("show-uncertain").checked = !0, document.getElementById("highlight-tls").checked = !0, filteredItems.hosts.clear(), filteredItems.services.clear(), filteredItems.nodes.clear(), filteredItems.edges.clear(), refreshGraph()
+        }
+
+        function refreshGraph() {
+            if (network) {
+                network.destroy();
+                network = null;
+            }
+            if (minimapNetwork) {
+                minimapNetwork.destroy();
+                minimapNetwork = null;
+            }
+
+            // Clear datasets to prevent issues with stale data
+            nodesDataset = null;
+            edgesDataset = null;
+
+            renderGraph();
+        }
+
+        function highlightTlsServices() {
+            const e = document.getElementById("highlight-tls").checked;
+            nodesDataset.get({
+                filter: e => "service" === e.type && e.tls
+            }).forEach((t => {
+                nodesDataset.update({
+                    id: t.id,
+                    color: e ? {
+                        border: "#e74c3c",
+                        background: "#e74c3c",
+                        highlight: {
+                            border: "#c0392b",
+                            background: "#e74c3c"
+                        }
+                    } : null
+                })
+            }))
+        }
+
+        function highlightConnections(e) {
+            nodesDataset.update(nodesDataset.get().map((e => ({
+                id: e.id,
+                color: void 0,
+                font: void 0
+            })))), edgesDataset.update(edgesDataset.get().map((e => ({
+                id: e.id,
+                color: void 0,
+                width: e.originalWidth || e.width
+            }))));
+            const t = nodesDataset.get(e),
+                n = new Set,
+                o = new Set;
+            "host" === t.type ? edgesDataset.get({
+                filter: t => t.from === e
+            }).forEach((e => {
+                n.add(e.to), o.add(e.id)
+            })) : "service" === t.type && edgesDataset.get({
+                filter: t => t.to === e
+            }).forEach((e => {
+                n.add(e.from), o.add(e.id)
+            })), nodesDataset.update({
+                id: e,
+                color: {
+                    border: "#8e44ad",
+                    background: "#9b59b6"
+                },
+                font: {
+                    color: "#000000",
+                    bold: !0
+                }
+            }), n.forEach((e => {
+                nodesDataset.update({
+                    id: e,
+                    color: {
+                        border: "#16a085",
+                        background: "#1abc9c"
+                    },
+                    font: {
+                        bold: !0
+                    }
+                })
+            })), o.forEach((e => {
+                const t = edgesDataset.get(e);
+                edgesDataset.update({
+                    id: e,
+                    color: "#16a085",
+                    width: 2 * (t.width || 1),
+                    originalWidth: t.width || 1
+                })
+            }))
+        }
+
+        function getConnectedHosts(e) {
+            return edgesDataset.get({
+                filter: t => t.to === e
+            }).map((e => e.from))
+        }
+
+        function getConnectedServices(e) {
+            return edgesDataset.get({
+                filter: t => t.from === e
+            }).map((e => e.to))
+        }
+
+        function countServiceInstances(e) {
+            let t = 0;
+            return scanData.hosts.forEach((n => {
+                n.ports.forEach((n => {
+                    n.service.replace("?", "") === e && t++
+                }))
+            })), t
+        }
+
+        function processSubnets() {
+            subnetGroups = {}, scanData.hosts.forEach((e => {
+                const t = getSubnet(e.ip);
+                subnetGroups[t] || (subnetGroups[t] = {
+                    hosts: new Set,
+                    services: new Set
+                }), subnetGroups[t].hosts.add(e.ip), e.ports.forEach((e => {
+                    subnetGroups[t].services.add(e.service.replace("?", ""))
+                }))
+            })), scanData.hostsUp && scanData.hostsUp.forEach((e => {
+                const t = getSubnet(e.ip);
+                subnetGroups[t] || (subnetGroups[t] = {
+                    hosts: new Set,
+                    services: new Set
+                }), subnetGroups[t].hosts.add(e.ip)
+            }))
+        }
+
+        function getSubnet(e) {
+            const t = e.split(".");
+            return 4 === t.length ? `${t[0]}.${t[1]}.${t[2]}` : e
+        }
+
+        function getSubnetGroup(e) {
+            return getSubnet(e)
+        }
+
+        function formatNodeTooltip(e) {
+            let t = `<strong>${e.ip}</strong>`;
+            return e.hostname && (t += `<br>${e.hostname}`), t += `<br>Open Ports: ${e.ports.length}`, e.ports.length > 0 && (t += "<br><br><strong>Ports:</strong><br>", e.ports.slice(0, 5).forEach((e => {
+                t += `${e.port}/${e.protocol} (${e.service})${e.comment ? ` - ${e.comment}` : ""}<br>`
+            })), e.ports.length > 5 && (t += `... and ${e.ports.length - 5} more`)), t
+        }
+
+        function formatEdgeTooltip(e) {
+            let t = "<strong>Ports:</strong><br>";
+            return e.forEach((e => {
+                t += `${e.port}/${e.protocol} (${e.service})${e.comment ? ` - ${e.comment}` : ""}<br>`
+            })), t
+        }
+
+        function showTooltip(nodeId, pointer, isEdge = false, edgeData = null) {
+            const tooltip = document.getElementById("graph-tooltip");
+            let content = "";
+
+            if (isEdge && edgeData) {
+                content = edgeData.title || "Connection";
+            } else {
+                const node = nodesDataset.get(nodeId);
+                if (node) {
+                    content = node.title || node.label;
+                }
+            }
+
+            if (content) {
+                tooltip.innerHTML = content;
+
+                // Use vis.js network's DOM positions instead of event coordinates
+                // which are more reliable for tooltip positioning
+                const position = network.canvasToDOM(pointer);
+
+                tooltip.style.left = `${position.x + 10}px`;
+                tooltip.style.top = `${position.y + 10}px`;
+                tooltip.style.display = "block";
+            }
+        }
+        function hideTooltip() {
+            document.getElementById("graph-tooltip").style.display = "none"
+        }
+
+        function exportNetworkImage() {
+            if (!network) return;
+            const e = network.canvas.frame.canvas,
+                t = document.createElement("a");
+            t.download = "unitas-network.png", t.href = e.toDataURL("image/png").replace("image/png", "image/octet-stream"), document.body.appendChild(t), t.click(), document.body.removeChild(t)
+        }
+
+        function saveCurrentView() {
+            if (!network) return;
+            const e = prompt("Enter a name for this view:");
+            e && (savedViews[e] = {
+                position: network.getViewPosition(),
+                scale: network.getScale(),
+                pinnedNodes: Array.from(pinnedNodes),
+                filter: {
+                    service: document.getElementById("service-filter").value,
+                    portMin: document.getElementById("port-min").value,
+                    portMax: document.getElementById("port-max").value,
+                    subnet: document.getElementById("subnet-filter").value,
+                    showUpHosts: document.getElementById("show-up-hosts").checked,
+                    showUncertain: document.getElementById("show-uncertain").checked,
+                    highlightTls: document.getElementById("highlight-tls").checked
+                }
+            }, alert(`View "${e}" saved successfully!`))
+        }
+
+        function runAnalysis() {
+            const e = document.getElementById("analysis-type").value,
+                t = document.getElementById("analysis-result"),
+                n = document.getElementById("analysis-content");
+            if ("none" === e) return void t.classList.add("hidden");
+            t.classList.remove("hidden");
+            let o = "";
+            switch (e) {
+                case "common-services":
+                    o = findCommonServices();
+                    break;
+                case "segments":
+                    o = identifyNetworkSegments();
+                    break;
+                case "unusual":
+                    o = findUnusualPorts();
+                    break;
+                case "connectivity":
+                    o = findMostConnectedHosts()
+            }
+            n.innerHTML = o
+        }
+
+        function findCommonServices() {
+            const e = {};
+            scanData.hosts.forEach((t => {
+                const n = new Set;
+                t.ports.forEach((e => {
+                    const t = e.service.replace("?", "");
+                    n.add(t)
+                })), n.forEach((t => {
+                    e[t] = (e[t] || 0) + 1
+                }))
+            }));
+            const t = Object.entries(e).sort(((e, t) => t[1] - e[1])).filter((([e, t]) => t > 1));
+            if (0 === t.length) return "<p>No common services found across multiple hosts.</p>";
+            let n = "<p>Services found on multiple hosts:</p><ul>";
+            return t.forEach((([e, t]) => {
+                const o = Math.round(t / scanData.hosts.length * 100);
+                n += `<li><strong>${e}</strong>: Found on ${t} hosts (${o}%)</li>`
+            })), n += "</ul>", n
+        }
+
+        function identifyNetworkSegments() {
+            let e = "<p>Identified network segments:</p><ul>";
+            return Object.entries(subnetGroups).sort(((e, t) => t[1].hosts.size - e[1].hosts.size)).forEach((([t, n]) => {
+                if (e += `<li><strong>${t}.0/24</strong>: ${n.hosts.size} hosts`, n.services.size > 0) {
+                    e += `, ${n.services.size} services`;
+                    const t = Array.from(n.services).slice(0, 3);
+                    t.length > 0 && (e += ` (${t.join(", ")}${n.services.size > 3 ? "..." : ""})`)
+                }
+                e += "</li>"
+            })), e += "</ul>", e
+        }
+
+        function findUnusualPorts() {
+            const e = {},
+                t = [],
+                n = [];
+            scanData.hosts.forEach((o => {
+                o.ports.forEach((s => {
+                    const r = parseInt(s.port);
+                    e[r] = (e[r] || 0) + 1, r > 1e4 && t.push({
+                        ip: o.ip,
+                        hostname: o.hostname,
+                        port: s.port,
+                        protocol: s.protocol,
+                        service: s.service
+                    });
+                    const i = {
+                        http: [80, 8080],
+                        https: [443, 8443],
+                        ssh: [22],
+                        ftp: [21],
+                        smtp: [25],
+                        dns: [53],
+                        rdp: [3389]
+                    },
+                        a = s.service.replace("?", "");
+                    i[a] && !i[a].includes(r) && n.push({
+                        ip: o.ip,
+                        hostname: o.hostname,
+                        port: s.port,
+                        protocol: s.protocol,
+                        service: s.service,
+                        standardPorts: i[a].join(", ")
+                    })
+                }))
+            }));
+            const o = Object.entries(e).filter((([e, t]) => 1 === t)).map((([e]) => parseInt(e))).sort(((e, t) => e - t));
+            let s = "";
+            return t.length > 0 && (s += "<p><strong>Unusual high ports (>10000):</strong></p><ul>", t.slice(0, 10).forEach((e => {
+                s += `<li>${e.ip} - ${e.port}/${e.protocol} (${e.service})</li>`
+            })), t.length > 10 && (s += `<li>...and ${t.length - 10} more</li>`), s += "</ul>"), n.length > 0 && (s += "<p><strong>Services on non-standard ports:</strong></p><ul>", n.forEach((e => {
+                s += `<li>${e.ip} - ${e.service} on port ${e.port} (standard: ${e.standardPorts})</li>`
+            })), s += "</ul>"), o.length > 0 && (s += "<p><strong>Uncommon ports (found on only one host):</strong></p>", s += `<p>${o.slice(0, 20).join(", ")}${o.length > 20 ? "..." : ""}</p>`), "" === s && (s = "<p>No unusual ports detected.</p>"), s
+        }
+
+        function findMostConnectedHosts() {
+            const e = {};
+            scanData.hosts.forEach((t => {
+                e[t.ip] = {
+                    ip: t.ip,
+                    hostname: t.hostname,
+                    ports: t.ports.length,
+                    services: new Set(t.ports.map((e => e.service.replace("?", "")))).size
+                }
+            }));
+            const t = Object.values(e).sort(((e, t) => t.ports - e.ports));
+            let n = "<p><strong>Hosts by connectivity (number of open ports):</strong></p><ul>";
+            return t.slice(0, 10).forEach((e => {
+                n += `<li><strong>${e.ip}</strong>${e.hostname ? ` (${e.hostname})` : ""}: ${e.ports} ports, ${e.services} unique services</li>`
+            })), t.length > 10 && (n += `<li>...and ${t.length - 10} more hosts</li>`), n += "</ul>", n
+        } ["dragenter", "dragover", "dragleave", "drop"].forEach((e => {
+            dropArea.addEventListener(e, preventDefaults, !1)
+        })), ["dragenter", "dragover"].forEach((e => {
+            dropArea.addEventListener(e, highlight, !1)
+        })), ["dragleave", "drop"].forEach((e => {
+            dropArea.addEventListener(e, unhighlight, !1)
+        })), dropArea.addEventListener("drop", handleDrop, !1), fileInput.addEventListener("change", (function () {
+            1 === this.files.length ? handleFile(this.files[0]) : showError("Please select a single JSON file.")
+        })), reloadBtn.addEventListener("click", (function () {
+            initialScreen.classList.remove("hidden"), dataView.classList.add("hidden"), errorMessage.classList.add("hidden"), fileInput.value = "", scanData = null, network && (network.destroy(), network = null), minimapNetwork && (minimapNetwork.destroy(), minimapNetwork = null), pinnedNodes.clear(), filteredItems.hosts.clear(), filteredItems.services.clear(), filteredItems.nodes.clear(), filteredItems.edges.clear()
+        }))
+    </script>
 </body>
 
 </html>
