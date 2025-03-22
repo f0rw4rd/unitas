@@ -280,7 +280,7 @@ class Convert(ABC):
 
     @staticmethod
     def sort_global_state_by_ip(
-        global_state: Dict[str, HostScanData]
+        global_state: Dict[str, HostScanData],
     ) -> Dict[str, HostScanData]:
         sorted_ips = sorted(global_state.keys(), key=ip_address)
         return {ip: global_state[ip] for ip in sorted_ips}
@@ -1017,12 +1017,13 @@ class NmapMerger(ScanMerger):
 
 class NessusMerger(ScanMerger):
 
-    def __init__(self, directory: str, output_directory: str):
+    def __init__(self, directory: str, output_directory: str, report_title: str = None):
         super().__init__(directory, output_directory)
         self.tree: ET.ElementTree = None
         self.root: ET.Element = None
         self.output_file: str = "merged_report.nessus"
         self.filter: str = "*.nessus"
+        self.report_title: str = report_title or NessusExporter.report_name
 
     def parse(self):
         first_file_parsed = True
@@ -1032,7 +1033,7 @@ class NessusMerger(ScanMerger):
                 if first_file_parsed:
                     self.tree = ET.parse(file_path)
                     self.report = self.tree.find("Report")
-                    self.report.attrib["name"] = NessusExporter.report_name
+                    self.report.attrib["name"] = self.report_title
                     first_file_parsed = False
                 else:
                     tree = ET.parse(file_path)
@@ -1241,7 +1242,7 @@ def generate_nmap_scan_command(global_state: Dict[str, HostScanData]) -> str:
 
 
 def filter_uncertain_services(
-    global_state: Dict[str, HostScanData]
+    global_state: Dict[str, HostScanData],
 ) -> Dict[str, HostScanData]:
     certain_services = {}
     for ip, host_data in global_state.items():
@@ -1349,6 +1350,12 @@ def main() -> None:
         help="Output the scan results in grepable format (including hosts that are up, but have no port open e.g. via ICMP)",
     )
 
+    parser.add_argument(
+        "--report-title",
+        help="Specify a custom title for the merged Nessus report",
+        default=None,
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -1383,7 +1390,9 @@ def main() -> None:
         merger.parse()
 
         merger = NessusMerger(
-            args.scan_folder, os.path.join(args.scan_folder, "merged")
+            args.scan_folder,
+            os.path.join(args.scan_folder, "merged"),
+            args.report_title,
         )
         merger.parse()
         merger.save_report()
