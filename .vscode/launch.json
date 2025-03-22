@@ -122,5 +122,17 @@
                 "tests"
             ]
         },
+        {
+            "name": "Start Parser HTTP server",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "unitas.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-v",
+                "-H",
+                "tests"
+            ]
+        },
     ]
 }

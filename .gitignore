@@ -1,8 +1,10 @@
 # ignore the test files, just local scans
 test/
+tests/*
 tests/merged/
 .state.pkl
 state.md
+*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

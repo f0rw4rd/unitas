@@ -13,6 +13,7 @@ Unitas is a powerful network scan parser and analyzer tool designed to simplify 
 - Generate Nmap commands to re-scan ports that were not service scanned
 - Filter out uncertain services to focus on confirmed findings
 - Concurrent parsing of scan files for improved performance
+- Interactive web visualization with built-in HTTP server
 
 ## Installation
 
@@ -40,7 +41,50 @@ unitas /path/to/scan/folder [options]
 - `-e`, `--export`: Export all scans from Nessus
 - `-m`, `--merge`: Merge scans in the folder
 - `-g`, `--grep`: Print host and ports in a grep-able format (including hosts that have no open ports)
+- `-j`, `--json`: Export scan results as a JSON file that can be loaded by the HTML viewer
+- `-H`, `--http-server`: Start an HTTP server with interactive visualization of scan results
+- `--port`: Specify the port for the HTTP server (default: 8000)
 - `--report-title`: Specify a custom title for the merged Nessus report
+
+## Interactive Visualization
+
+Unitas includes a built-in web interface for visualizing your network scan results. This interactive tool allows you to explore your network topology, filter by services and ports, and perform various analyses.
+
+### Using the Web Interface
+
+To start the web visualization server:
+
+```
+unitas /path/to/scan/folder -H
+```
+
+This will:
+1. Process all scan files in the specified folder
+2. Start a local HTTP server (default port 8000)
+3. Open your web browser to the visualization page
+4. Automatically load the scan results
+
+You can specify a custom port if needed:
+
+```
+unitas /path/to/scan/folder -H --port 9000
+```
+
+### Visualization Features
+
+The web interface provides several powerful features:
+- Interactive network graph showing hosts and services
+- Filter by service type, port range, and subnets
+- Highlight TLS/SSL services
+- View detailed information about hosts and services
+- Run automated analyses including:
+  - Finding common services
+  - Identifying network segments
+  - Highlighting unusual ports
+  - Finding most connected hosts
+- Export the graph as a PNG image
+
+To stop the server, press Ctrl+C in your terminal.
 
 ## Markdown Table Output
 
@@ -107,7 +151,12 @@ unitas /path/to/scan/folder -m
 
 Output hosts and ports in a grepable format:
 ```
-unitas /path/to/scan/folder
+unitas /path/to/scan/folder -g
+```
+
+Export scan results as JSON and launch the interactive visualization:
+```
+unitas /path/to/scan/folder -H
 ```
 
 ## Configuration
@@ -115,6 +164,13 @@ unitas /path/to/scan/folder
 Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. If the configuration file doesn't exist, Unitas will create a template for you. Make sure to update the `secret_key`, `access_key`, and `url` fields with your Nessus API credentials.
 
 ## Changelog
+
+### 1.1.0
+* Added interactive network visualization with `-H/--http-server` flag
+* Built-in HTTP server for viewing network topology
+* Interactive graph with filtering and analysis capabilities
+* Auto-loading of scan data in the web interface
+* Customizable server port with `--port` option
 
 ### 1.0.4
 
