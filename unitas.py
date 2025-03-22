@@ -748,15 +748,12 @@ class ScanMerger(ABC):
                 continue
 
             # Skip output directory files
-            if (
-                self.output_directory not in file
-                and self.output_directory.split(".")[1] not in file
-            ):
-                files.append(file)
-            else:
+            if os.path.abspath(self.output_directory) in os.path.abspath(file):
                 logging.warning(
                     f"Skipping file {file} to prevent merging a merged scan!"
                 )
+            else:
+                files.append(file)
 
         return files
 
