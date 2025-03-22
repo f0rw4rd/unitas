@@ -30,9 +30,14 @@ except ImportError:
     REQUESTS_INSTALLED = False
 
 try:
-    __version__ = version("unitas")
-except PackageNotFoundError:
-    __version__ = "dev-version"
+    from importlib.metadata import version, PackageNotFoundError
+
+    try:
+        __version__ = version("unitas")
+    except PackageNotFoundError:
+        __version__ = "dev-version"
+except ImportError:
+    __version__ = "dev-version"  # Fallback for older Python versions
 
 
 class UnitasConfig:

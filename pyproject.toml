@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitas"
-version = "1.0.2"
+version = "1.0.3"
 authors = [
     { name = "f0rw4rd", email = "f0rw4rd@localhost.local" },
 ]
@@ -13,6 +13,18 @@ requires-python = ">=3.8"
 dependencies = [
     "requests",
 ]
+readme = "README.md"
+license = {text = "GPL-3.0"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Topic :: System :: Networking :: Monitoring",
+]
 
 [project.scripts]
 unitas = "unitas:main"
+
+[tool.setuptools]
+py-modules = ["unitas"]

@@ -40,6 +40,7 @@ unitas /path/to/scan/folder [options]
 - `-e`, `--export`: Export all scans from Nessus
 - `-m`, `--merge`: Merge scans in the folder
 - `-g`, `--grep`: Print host and ports in a grep-able format (including hosts that have no open ports)
+- `--report-title`: Specify a custom title for the merged Nessus report
 
 ## Markdown Table Output
 
