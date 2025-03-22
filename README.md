@@ -17,7 +17,7 @@ Unitas is a powerful network scan parser and analyzer tool designed to simplify 
 ## Installation
 
 ```
-pip install git+https://github.com/f0rw4rd/unitas@latest
+pip install unitas
 ```
 
 ## Usage
@@ -116,10 +116,15 @@ Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. 
 
 ## Changelog
 
+### 1.0.4
+
+* nessus title feature
+* fixed a bug in merge detection
+* added github workflow
+
 ### 1.0.3
 * improved the service lookup
 * fixed a bug if a directory with .xml is found
-* TBD: checkout how merge nessus hardening settings
 
 ### 1.0.2
 * fixed bug #1
