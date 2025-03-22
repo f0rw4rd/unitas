@@ -110,5 +110,17 @@
                 "tests"
             ]
         },
+        {
+            "name": "Start Parser with json export",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "unitas.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-v",
+                "-j",
+                "tests"
+            ]
+        },
     ]
 }

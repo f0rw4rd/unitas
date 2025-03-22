@@ -20,6 +20,7 @@ import shutil
 from copy import deepcopy
 from importlib.metadata import version, PackageNotFoundError
 from hashlib import sha512
+import json
 
 try:
     import requests
@@ -736,6 +737,112 @@ class NessusExporter:
                 )
 
 
+class JsonExport(Convert):
+    """
+    Export scan results as a structured JSON file that can be loaded
+    by the standalone HTML viewer or used for other data analysis.
+    """
+
+    def __init__(
+        self,
+        global_state: Dict[str, HostScanData] = None,
+        hostup_dict: Dict[str, str] = None,
+    ):
+        super().__init__(global_state)
+        self.hostup_dict = hostup_dict or {}
+
+    def convert(self) -> str:
+        """Convert the scan data to a JSON string."""
+        # Prepare hosts data
+        hosts_data = []
+        for ip, host in self.global_state.items():
+            host_entry = {
+                "ip": ip,
+                "hostname": host.hostname,
+                "ports": [],
+                "hasOpenPorts": len(host.ports) > 0,
+            }
+            for port in host.ports:
+                host_entry["ports"].append(
+                    {
+                        "port": port.port,
+                        "protocol": port.protocol,
+                        "service": port.service,
+                        "state": port.state,
+                        "comment": port.comment,
+                        "uncertain": "?" in port.service,
+                        "tls": "TLS" in port.comment,
+                    }
+                )
+            hosts_data.append(host_entry)
+
+        # Prepare hosts-up data
+        hostup_data = []
+        for ip, reason in self.hostup_dict.items():
+            hostup_data.append({"ip": ip, "reason": reason})
+
+        # Build complete data structure
+        data = {
+            "metadata": {
+                "version": __version__,
+                "timestamp": time.time(),
+                "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "stats": {
+                    "totalHosts": len(hosts_data),
+                    "totalPorts": sum(len(host["ports"]) for host in hosts_data),
+                    "hostsUp": len(hostup_data),
+                },
+            },
+            "hosts": hosts_data,
+            "hostsUp": hostup_data,
+        }
+
+        # Return pretty-printed JSON
+        return json.dumps(data, indent=2)
+
+    def parse(self, content: str) -> Dict[str, HostScanData]:
+        """
+        Parse a JSON string back into a Unitas state structure.
+        This allows importing previously exported JSON data.
+        """
+        try:
+            data = json.loads(content)
+            result = {}
+
+            # Parse hosts
+            for host_entry in data.get("hosts", []):
+                ip = host_entry.get("ip")
+                if not ip or not HostScanData.is_valid_ip(ip):
+                    logging.warning(f"Invalid IP in JSON data: {ip}")
+                    continue
+
+                host = HostScanData(ip)
+                host.set_hostname(host_entry.get("hostname", ""))
+
+                for port_entry in host_entry.get("ports", []):
+                    try:
+                        host.add_port(
+                            port_entry.get("port", ""),
+                            port_entry.get("protocol", "tcp"),
+                            port_entry.get("state", "TBD"),
+                            port_entry.get("service", "unknown?"),
+                            port_entry.get("comment", ""),
+                        )
+                    except ValueError as e:
+                        logging.warning(f"Error adding port: {e}")
+
+                result[ip] = host
+
+            return result
+
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON data: {e}")
+            return {}
+        except Exception as e:
+            logging.error(f"Error importing JSON data: {e}")
+            return {}
+
+
 class ScanMerger(ABC):
     def __init__(self, directory: str, output_directory: str):
         self.directory = directory
@@ -1353,6 +1460,15 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Export scan results as a JSON file that can be loaded by the HTML viewer",
+    )
+
+    parser.add_argument(
+        "-T",
         "--report-title",
         help="Specify a custom title for the merged Nessus report",
         default=None,
@@ -1455,6 +1571,15 @@ def main() -> None:
         logging.info("Scan Results (grep):")
         print()
         print(grep_conv.convert_with_up(hostup_dict))
+        return
+
+    if args.json:
+        json_exporter = JsonExport(final_state, hostup_dict)
+        json_content = json_exporter.convert()
+        output_file = f"unitas.json"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(json_content)
+        logging.info(f"Exported JSON data to {os.path.abspath(output_file)}")
         return
 
     if args.service:
