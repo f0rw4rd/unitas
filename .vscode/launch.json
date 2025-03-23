@@ -13,6 +13,14 @@
             "justMyCode": false
         },
         {
+            "name": "Test integration",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tests/test_integration.py",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
             "name": "Start Parser",
             "type": "debugpy",
             "request": "launch",
