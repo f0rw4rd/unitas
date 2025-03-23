@@ -44,6 +44,7 @@ unitas /path/to/scan/folder [options]
 - `-g`, `--grep`: Print host and ports in a grep-able format (including hosts that have no open ports)
 - `-j`, `--json`: Export scan results as a JSON file that can be loaded by the HTML viewer
 - `-o`, `--origin`: Show origin information (source scanner type, file, and date) for each port
+- `-M`, `--mac-report`: Generate a markdown report of MAC addresses for network inventory
 - `-H`, `--http-server`: Start an HTTP server with interactive visualization of scan results
 - `--port`: Specify the port for the HTTP server (default: 8000)
 - `--report-title`: Specify a custom title for the merged Nessus report
@@ -166,6 +167,12 @@ unitas /path/to/scan/folder -H
 Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. If the configuration file doesn't exist, Unitas will create a template for you. Make sure to update the `secret_key`, `access_key`, and `url` fields with your Nessus API credentials.
 
 ## Changelog
+
+### 1.2.0
+* Added MAC address reporting with `-M/--mac-report` flag
+* Network inventory feature to track MAC addresses and vendors
+* Markdown output format for MAC address reports
+* Integrates with MAC vendor lookup
 
 ### 1.1.0
 * Added interactive network visualization with `-H/--http-server` flag
