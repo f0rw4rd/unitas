@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError, Element
 import concurrent.futures
 
-from unitas.model import HostScanData, PortDetails
+from unitas.model import HostScanData, PortDetails, merge_states
 
 
 class ScanParser(ABC):
@@ -276,5 +276,7 @@ def parse_files_concurrently(
                 global_state = merge_states(global_state, scan_results)
 
             except Exception as exc:
-                logging.error(f"{parser.file_path} generated an exception: {exc}")
+                logging.error(
+                    f"{parser.file_path} generated an exception: {exc}", exc_info=True
+                )
     return global_state

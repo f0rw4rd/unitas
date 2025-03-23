@@ -11,7 +11,7 @@ from abc import ABC
 from importlib.metadata import version, PackageNotFoundError
 from hashlib import sha512
 from xml.etree.ElementTree import ParseError
-from unitas import (
+from unitas.convert import (
     GrepConverter,
     JsonExport,
     MarkdownConvert,
@@ -19,13 +19,14 @@ from unitas import (
 )
 from unitas.merger import NessusMerger, NmapMerger
 from unitas.exporter import NessusExporter
+from unitas.model import HostScanData, merge_states
 from unitas.parser import NessusParser, NmapParser, parse_files_concurrently
-from utils import (
-    HostScanData,
+from unitas.utils import (
     hostup_dict,
+    search_port_or_service,
     service_lookup,
 )
-from webserver import start_http_server
+from unitas.webserver import start_http_server
 
 
 try:
@@ -37,36 +38,6 @@ try:
         __version__ = "dev-version"
 except ImportError:
     __version__ = "dev-version"  # Fallback for older Python versions
-
-
-class ScanMerger(ABC):
-    def __init__(self, directory: str, output_directory: str):
-        self.directry = directory
-        self.output_directory = output_directory
-        self.output_file: str = None
-        self.filter: str = None
-
-    def search(self, wildcard: str) -> List[str]:
-        files = []
-        for file in glob.glob(
-            os.path.join(self.directory, "**", wildcard), recursive=True
-        ):
-            # Skip if it's a directory
-            if os.path.isdir(file):
-                continue
-
-            # Skip output directory files
-            if os.path.abspath(self.output_directory) in os.path.abspath(file):
-                logging.warning(
-                    f"Skipping file {file} to prevent merging a merged scan!"
-                )
-            else:
-                files.append(file)
-
-        return files
-
-    def parse(self):
-        pass
 
 
 class CustomFormatter(logging.Formatter):
@@ -97,68 +68,6 @@ def setup_logging(verbose: bool) -> None:
     logger = logging.getLogger()
     logger.setLevel(level)
     logger.addHandler(handler)
-
-
-def merge_states(
-    old_state: Dict[str, HostScanData], new_state: Dict[str, HostScanData]
-) -> Dict[str, HostScanData]:
-    merged_state = old_state.copy()
-    for ip, new_host_data in new_state.items():
-        if ip not in merged_state:
-            logging.debug(f"Added host {ip}")
-            merged_state[ip] = new_host_data
-        else:
-            existing_ports = {(p.port, p.protocol): p for p in merged_state[ip].ports}
-            for new_port in new_host_data.ports:
-                key = (new_port.port, new_port.protocol)
-                if key in existing_ports:
-                    if not existing_ports[key] == new_port:
-                        existing_ports[key].update(new_port)
-                else:
-                    logging.debug(f"Added port {new_port}")
-                    existing_ports[key] = new_port
-
-            merged_state[ip].ports = list(existing_ports.values())
-    return merged_state
-
-
-def search_port_or_service(
-    global_state: Dict[str, HostScanData],
-    search_terms: List[str],
-    with_url: bool,
-    hide_ports: bool,
-) -> List[str]:
-    matching_ips = set()
-    for ip, host_data in global_state.items():
-        for port in host_data.ports:
-            for term in search_terms:
-                if term.lower().strip() == port.port.lower() or (
-                    term.lower().strip() == port.service.lower()
-                    or term.lower().strip() + "?" == port.service.lower()
-                ):
-                    port_nr = port.port
-                    service = port.service.replace("?", "")
-                    url: str = ip
-                    if with_url:
-                        url = service + "://" + url
-
-                    if port == 139:
-                        pass
-
-                    # show ports if the port is not the default port for the service
-                    # if multiple terms are used, do not do this e.g. http and https, which leads to the same host without any context which is which
-                    if hide_ports:
-                        pass  # no need to do anything
-
-                    elif (
-                        not service_lookup.get_service_name_for_port(port_nr) == service
-                        or len(search_terms) > 1
-                    ):
-                        url += ":" + port_nr
-
-                    matching_ips.add(url)
-
-    return sorted(list(matching_ips))
 
 
 def generate_nmap_scan_command(global_state: Dict[str, HostScanData]) -> str:

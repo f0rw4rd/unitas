@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from ipaddress import ip_address
 import json
 import logging
+import re
 import time
 from typing import Dict
 

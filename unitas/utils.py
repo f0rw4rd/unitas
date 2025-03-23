@@ -8,6 +8,8 @@ import socket
 import threading
 from typing import Any, Dict, List
 
+from unitas.model import HostScanData, PortDetails
+
 
 class UnitasConfig:
     def __init__(self, config_file: str = "~/.unitas"):
@@ -74,3 +76,42 @@ class ThreadSafeServiceLookup:
 service_lookup = ThreadSafeServiceLookup()
 hostup_dict = defaultdict(dict)
 config = UnitasConfig()
+
+
+def search_port_or_service(
+    global_state: Dict[str, HostScanData],
+    search_terms: List[str],
+    with_url: bool,
+    hide_ports: bool,
+) -> List[str]:
+    matching_ips = set()
+    for ip, host_data in global_state.items():
+        for port in host_data.ports:
+            for term in search_terms:
+                if term.lower().strip() == port.port.lower() or (
+                    term.lower().strip() == port.service.lower()
+                    or term.lower().strip() + "?" == port.service.lower()
+                ):
+                    port_nr = port.port
+                    service = port.service.replace("?", "")
+                    url: str = ip
+                    if with_url:
+                        url = service + "://" + url
+
+                    if port == 139:
+                        pass
+
+                    # show ports if the port is not the default port for the service
+                    # if multiple terms are used, do not do this e.g. http and https, which leads to the same host without any context which is which
+                    if hide_ports:
+                        pass  # no need to do anything
+
+                    elif (
+                        not service_lookup.get_service_name_for_port(port_nr) == service
+                        or len(search_terms) > 1
+                    ):
+                        url += ":" + port_nr
+
+                    matching_ips.add(url)
+
+    return sorted(list(matching_ips))

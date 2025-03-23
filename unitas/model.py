@@ -165,3 +165,26 @@ class HostScanData:
         for port_data in data["ports"]:
             host.ports.append(PortDetails.from_dict(port_data))
         return host
+
+
+def merge_states(
+    old_state: Dict[str, HostScanData], new_state: Dict[str, HostScanData]
+) -> Dict[str, HostScanData]:
+    merged_state = old_state.copy()
+    for ip, new_host_data in new_state.items():
+        if ip not in merged_state:
+            logging.debug(f"Added host {ip}")
+            merged_state[ip] = new_host_data
+        else:
+            existing_ports = {(p.port, p.protocol): p for p in merged_state[ip].ports}
+            for new_port in new_host_data.ports:
+                key = (new_port.port, new_port.protocol)
+                if key in existing_ports:
+                    if not existing_ports[key] == new_port:
+                        existing_ports[key].update(new_port)
+                else:
+                    logging.debug(f"Added port {new_port}")
+                    existing_ports[key] = new_port
+
+            merged_state[ip].ports = list(existing_ports.values())
+    return merged_state

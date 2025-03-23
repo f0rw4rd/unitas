@@ -1,4 +1,6 @@
+from abc import ABC
 from copy import deepcopy
+import glob
 import logging
 import os
 from typing import Dict, List
@@ -7,6 +9,36 @@ import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError, Element
 
 from .exporter import NessusExporter
+
+
+class ScanMerger(ABC):
+    def __init__(self, directory: str, output_directory: str):
+        self.directry = directory
+        self.output_directory = output_directory
+        self.output_file: str = None
+        self.filter: str = None
+
+    def search(self, wildcard: str) -> List[str]:
+        files = []
+        for file in glob.glob(
+            os.path.join(self.directory, "**", wildcard), recursive=True
+        ):
+            # Skip if it's a directory
+            if os.path.isdir(file):
+                continue
+
+            # Skip output directory files
+            if os.path.abspath(self.output_directory) in os.path.abspath(file):
+                logging.warning(
+                    f"Skipping file {file} to prevent merging a merged scan!"
+                )
+            else:
+                files.append(file)
+
+        return files
+
+    def parse(self):
+        pass
 
 
 class NmapHost:
