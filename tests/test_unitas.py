@@ -149,7 +149,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "http?",
-                "sources": [],
+                "sources": [{"date": "", "file": "nmap-sample-1.xml", "type": "nmap"}],
                 "comment": "",
             },
         )
@@ -166,7 +166,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "unknown?",
-                "sources": [],
+                "sources": [{"date": "", "file": "nmap-sample-1.xml", "type": "nmap"}],
                 "comment": "",
             },
         )
@@ -183,7 +183,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "imap",
-                "sources": [],
+                "sources": [{"date": "", "file": "nmap-sample-1.xml", "type": "nmap"}],
                 "comment": "hMailServer imapd",
             },
         )
@@ -200,7 +200,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "https",
-                "sources": [],
+                "sources": [{"date": "", "file": "nmap-sample-1.xml", "type": "nmap"}],
                 "comment": "lighttpd;TLS",
             },
         )
@@ -217,7 +217,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "routeros-api",
-                "sources": [],
+                "sources": [{"date": "", "file": "nmap-sample-1.xml", "type": "nmap"}],
                 "comment": "MikroTik RouterOS API;TLS",
             },
         )
@@ -234,7 +234,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "unknown?",
-                "sources": [],
+                "sources": [{"date": "", "file": "nmap-sample-1.xml", "type": "nmap"}],
                 "comment": "",
             },
         )
@@ -251,7 +251,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "ftp",
-                "sources": [],
+                "sources": [{"date": "", "file": "nmap-sample-1.xml", "type": "nmap"}],
                 "comment": "ProFTPD or KnFTPD;TLS",
             },
         )
@@ -317,7 +317,9 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "https",
-                "sources": [],
+                "sources": [
+                    {"date": "", "file": "nessus-sample-1.nessus", "type": "nessus"}
+                ],
                 "comment": "TLS",
             },
         )
@@ -335,7 +337,9 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "udp",
                 "state": "TBD",
                 "service": "snmp?",
-                "sources": [],
+                "sources": [
+                    {"date": "", "file": "nessus-sample-1.nessus", "type": "nessus"}
+                ],
                 "comment": "",
             },
         )

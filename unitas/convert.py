@@ -112,13 +112,11 @@ class MarkdownConvert(Convert):
                 parts.append(source["type"])
             if source["file"]:
                 parts.append(source["file"])
-            if source["date"]:
-                parts.append(source["date"])
 
             if parts:
-                source_strings.append("/".join(parts))
+                source_strings.append(":".join(parts))
 
-        return ", ".join(source_strings)
+        return ",".join(source_strings)
 
     def parse(self, content: str) -> Dict[str, HostScanData]:
         lines = content.strip().split("\n")

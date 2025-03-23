@@ -20,6 +20,7 @@
             "console": "integratedTerminal",
             "args": [
                 "-v",
+                "-o",
                 "tests"
             ]
         },

@@ -4,6 +4,7 @@ from time import time
 from typing import Dict, List
 
 import requests
+import urllib3
 from unitas.utils import config
 
 

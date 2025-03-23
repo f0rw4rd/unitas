@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import glob
 import logging
+import os
 from unitas.utils import service_lookup, hostup_dict
 from typing import Dict, List, Optional, Tuple
 from xml.etree.ElementTree import ParseError
@@ -17,6 +18,8 @@ class ScanParser(ABC):
         self.tree: ET.ElementTree = ET.parse(file_path)
         self.root: ET.Element = self.tree.getroot()
         self.data: Dict[str, HostScanData] = {}
+        self.file_name: str = os.path.basename(file_path)
+        self.scan_date: str = ""
 
     @abstractmethod
     def parse(self) -> Dict[str, HostScanData]:
@@ -25,6 +28,10 @@ class ScanParser(ABC):
     @staticmethod
     @abstractmethod
     def get_extensions() -> List[str]:
+        pass
+
+    @abstractmethod
+    def get_scan_type(self) -> str:
         pass
 
     @classmethod
@@ -49,7 +56,15 @@ class NessusParser(ScanParser):
     def get_extensions() -> List[str]:
         return ["nessus"]
 
+    def get_scan_type(self) -> str:
+        return "nessus"
+
     def parse(self) -> Dict[str, HostScanData]:
+        # Try to extract scan date from Nessus file
+        report_element = self.root.find(".//Report")
+        if report_element is not None:
+            self.scan_date = report_element.get("name", "")
+
         for block in self.root.findall(".//ReportHost"):
             name: str = block.attrib.get("name", "")
             hostname: Optional[str] = None
@@ -107,8 +122,44 @@ class NessusParser(ScanParser):
                 service = "https"
             comment = "TLS"
         state: str = "TBD"
+
+        # Include source information
         return PortDetails(
-            port=port, service=service, comment=comment, state=state, protocol=protocol
+            port=port,
+            service=service,
+            comment=comment,
+            state=state,
+            protocol=protocol,
+            source_type=self.get_scan_type(),
+            source_file=self.file_name,
+            detected_date=self.scan_date,
+        )
+
+    def _parse_port_item(self, item: ET.Element) -> PortDetails:
+        if not all(attr in item.attrib for attr in ["port", "protocol", "svc_name"]):
+            logging.error(f"Failed to parse nessus port scan: {ET.tostring(item)}")
+            return None
+        port: str = item.attrib.get("port")
+        if port == "0":  # host scans return port zero, skip
+            return None
+        protocol: str = item.attrib.get("protocol")
+        service: str = item.attrib.get("svc_name")
+        if "?" not in service:  # append a ? for just port scans
+            service = service_lookup.get_service_name_for_port(port, protocol, service)
+            service += "?"
+        else:
+            service = PortDetails.get_service_name(service, port)
+        state: str = "TBD"
+
+        # Include source information
+        return PortDetails(
+            port=port,
+            service=service,
+            state=state,
+            protocol=protocol,
+            source_type=self.get_scan_type(),
+            source_file=self.file_name,
+            detected_date=self.scan_date,
         )
 
     def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> int:
@@ -155,7 +206,23 @@ class NmapParser(ScanParser):
     def get_extensions() -> List[str]:
         return ["xml"]
 
+    def get_scan_type(self) -> str:
+        return "nmap"
+
     def parse(self) -> Dict[str, HostScanData]:
+        if self.root.get("start"):
+            try:
+                start_timestamp = self.root.get("start")
+                self.scan_date = self.root.get("startstr", "")
+                if not self.scan_date and start_timestamp:
+                    import datetime
+
+                    self.scan_date = datetime.datetime.fromtimestamp(
+                        int(start_timestamp)
+                    ).strftime("%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                self.scan_date = ""
+
         for host in self.root.findall(".//host"):
             status = host.find(".//status")
             if status is not None and status.attrib.get("state") == "up":
@@ -243,6 +310,9 @@ class NmapParser(ScanParser):
             state="TBD",
             comment=comment,
             service=service,
+            source_type=self.get_scan_type(),
+            source_file=self.file_name,
+            detected_date=self.scan_date,
         )
 
     def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
