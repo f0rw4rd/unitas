@@ -450,27 +450,7 @@ class MacAddressReport(Convert):
             # Add the host data
             output.append("|" + "|".join(row_parts) + "|")
 
-            # Add hosts from hostup_dict if they're not already included
-            if self.include_up_hosts:
-                for ip, reason in self.hostup_dict.items():
-                    # Skip if this IP is already in the global state
-                    if ip in self.global_state:
-                        continue
-
-                    # Row with minimal information
-                    row_parts = [ip, "-", "-", "-", "0"]
-                    if self.show_origin:
-                        row_parts.append(f"hostup:{reason}")
-
-                    output.append("|" + "|".join(row_parts) + "|")
-
-            return "\n".join(output) + "\n"
-
-    def _csv_escape(self, text):
-        """Escape a string for CSV output"""
-        if not text:
-            return ""
-        return text
+        return "\n".join(output) + "\n"
 
     def parse(self, content: str) -> Dict[str, HostScanData]:
         """
