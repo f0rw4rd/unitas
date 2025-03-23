@@ -1,14 +1,11 @@
 #!/bin/python
 # pylint: disable=fixme, line-too-long, logging-fstring-interpolation, missing-function-docstring, missing-class-docstring
-import glob
-from typing import Dict, List, Set
+from typing import Dict, Set
 import os
 
 import argparse
 import logging
-from abc import ABC
 
-from importlib.metadata import version, PackageNotFoundError
 from hashlib import sha512
 from xml.etree.ElementTree import ParseError
 from unitas.convert import (
@@ -21,23 +18,8 @@ from unitas.merger import NessusMerger, NmapMerger
 from unitas.exporter import NessusExporter
 from unitas.model import HostScanData, merge_states
 from unitas.parser import NessusParser, NmapParser, parse_files_concurrently
-from unitas.utils import (
-    hostup_dict,
-    search_port_or_service,
-    service_lookup,
-)
+from unitas.utils import hostup_dict, search_port_or_service, get_version
 from unitas.webserver import start_http_server
-
-
-try:
-    from importlib.metadata import version, PackageNotFoundError
-
-    try:
-        __version__ = version("unitas")
-    except PackageNotFoundError:
-        __version__ = "dev-version"
-except ImportError:
-    __version__ = "dev-version"  # Fallback for older Python versions
 
 
 class CustomFormatter(logging.Formatter):
@@ -124,7 +106,7 @@ _  / / /_  __ \_  /_  __/  __ `/_  ___/
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=f"Unitas v{__version__}: A network scan parser and analyzer",
+        description=f"Unitas v{get_version()}: A network scan parser and analyzer",
         epilog="Example usage: python unitas.py /path/to/scan/folder -v --search 'smb'",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -140,7 +122,7 @@ def main() -> None:
         "-V",
         "--version",
         action="version",
-        version=f"%(prog)s {__version__}",
+        version=f"%(prog)s {get_version()}",
         help="Show the version number and exit",
     )
     parser.add_argument(
@@ -247,7 +229,7 @@ def main() -> None:
 
     setup_logging(args.verbose)
 
-    logging.info(f"Unitas v{__version__} starting up.")
+    logging.info(f"Unitas v{get_version()} starting up.")
     logging.info(BANNER)
 
     if not os.path.exists(args.scan_folder):

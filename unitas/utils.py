@@ -1,14 +1,26 @@
-from abc import ABC, abstractmethod
 from collections import defaultdict
 import configparser
-from ipaddress import ip_address
 import logging
 import os
 import socket
 import threading
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from unitas.model import HostScanData, PortDetails
+
+try:
+    from importlib.metadata import version, PackageNotFoundError
+
+    try:
+        __version__ = version("unitas")
+    except PackageNotFoundError:
+        __version__ = "dev-version"
+except ImportError:
+    __version__ = "dev-version"  # Fallback for older Python versions
+
+
+def get_version() -> str:
+    return __version__
 
 
 class UnitasConfig:

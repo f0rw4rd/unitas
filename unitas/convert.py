@@ -7,6 +7,7 @@ import time
 from typing import Dict
 
 from unitas import HostScanData
+from unitas.utils import get_version
 
 
 class Convert(ABC):
@@ -163,7 +164,7 @@ class JsonExport(Convert):
         # Build complete data structure
         data = {
             "metadata": {
-                "version": __version__,
+                "version": get_version(),
                 "timestamp": time.time(),
                 "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "stats": {
