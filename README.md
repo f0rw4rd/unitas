@@ -1,5 +1,8 @@
 # Unitas
 
+[![PyPI version](https://img.shields.io/pypi/v/unitas.svg)](https://pypi.org/project/unitas/)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 Unitas is a powerful network scan parser and analyzer tool designed to simplify the process of managing and analyzing network scan results. With Unitas, you can easily parse scan files from various tools, including Nmap and Nessus, merge scan results, search for specific ports or services, generate markdown reports, and even automate the export of scans from Nessus.
 
 ## Features
