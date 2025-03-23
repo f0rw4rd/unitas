@@ -2,28 +2,31 @@
 # pylint: disable=fixme, line-too-long, logging-fstring-interpolation, missing-function-docstring, missing-class-docstring
 import glob
 import threading
-import threading
 import shutil
 import time
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError, Element
-from typing import Dict, List, Optional, Tuple, Any, Set
+from typing import Dict, List, Optional, Tuple, Set
 import os
 import concurrent.futures
 import argparse
 import re
-import socket
-from ipaddress import ip_address
 import logging
-from collections import defaultdict
 from abc import ABC, abstractmethod
 import time
-import configparser
 import shutil
 from copy import deepcopy
 from importlib.metadata import version, PackageNotFoundError
 from hashlib import sha512
 import json
+from utils import (
+    Convert,
+    HostScanData,
+    PortDetails,
+    config,
+    hostup_dict,
+    service_lookup,
+)
 from webserver import start_http_server
 
 try:
@@ -43,257 +46,6 @@ try:
         __version__ = "dev-version"
 except ImportError:
     __version__ = "dev-version"  # Fallback for older Python versions
-
-
-class UnitasConfig:
-    def __init__(self, config_file: str = "~/.unitas"):
-        self.config_file = os.path.expanduser(config_file)
-        self.config = configparser.ConfigParser()
-
-        if not os.path.exists(self.config_file):
-            logging.error(f"Config file {config_file} was not found creating default")
-            self.create_template_config()
-        else:
-            self.config.read(self.config_file)
-
-    def create_template_config(self):
-        self.config["nessus"] = {
-            "secret_key": "",
-            "access_key": "",
-            "url": "https://127.0.0.1:8834",
-        }
-        with open(self.config_file, "w") as file:
-            self.config.write(file)
-        logging.info(
-            f"Template config file created at {self.config_file}. Please update the settings."
-        )
-
-    def get_secret_key(self):
-        return self.config.get("nessus", "secret_key")
-
-    def get_access_key(self):
-        return self.config.get("nessus", "access_key")
-
-    def get_url(self):
-        return self.config.get("nessus", "url")
-
-
-class PortDetails:
-    def __init__(
-        self,
-        port: str,
-        protocol: str,
-        state: str,
-        service: str = "unknown?",
-        comment: str = "",
-    ):
-        if not PortDetails.is_valid_port(port):
-            raise ValueError(f'Port "{port}" is not valid!')
-        self.port = port
-        self.protocol = protocol
-        self.state = state
-        self.service = service
-        self.comment = comment
-
-    def __str__(self) -> str:
-        return f"{self.port}/{self.protocol}({self.service})"
-
-    def to_dict(self) -> Dict[str, str]:
-        return {
-            "port": self.port,
-            "protocol": self.protocol,
-            "state": self.state,
-            "service": self.service,
-            "comment": self.comment,
-        }
-
-    def __eq__(self, other):
-        if not isinstance(other, PortDetails):
-            return NotImplemented
-        return self.to_dict() == other.to_dict()
-
-    def __repr__(self) -> str:
-        return f"PortDetails({self.port}/{self.protocol} {self.state} {self.service} {self.comment})"
-
-    def update(self, other: "PortDetails"):
-        # check if service should be overwritten
-        update_service = False
-        if other.service != "unknown?" and self.service == "unknown?":
-            update_service = True
-        if (
-            not "unknown" in other.service and not "?" in other.service
-        ) and self.service == "unknown":
-            update_service = True
-        # without the question mark, it was a service scan
-        elif "?" not in other.service and "?" in self.service:
-            update_service = True
-        # if the tag is longer e.g. http/tls instead of http, take it
-        elif "?" not in other.service and len(other.service) > len(self.service):
-            update_service = True
-
-        if update_service:
-            logging.debug(f"Updating service from {self.service} -> {other.service}")
-            self.service = other.service
-        # update the comments if comment is set
-        if not self.comment and other.comment:
-            logging.debug(f"Updating comment from {self.comment} -> {other.comment}")
-            self.comment = other.comment
-
-        if not self.state and other.state:
-            logging.debug(f"Updating state from {self.state} -> {other.state}")
-            self.state = other.state
-
-    @staticmethod
-    def is_valid_port(port: str) -> bool:
-        try:
-            port_num = int(port)
-            return 1 <= port_num <= 65535
-        except ValueError:
-            return False
-
-    SERVICE_MAPPING: Dict[str, str] = {
-        "www": "http",
-        "microsoft-ds": "smb",
-        "cifs": "smb",
-        "ms-wbt-server": "rdp",
-        "ms-msql-s": "mssql",
-    }
-
-    @staticmethod
-    def get_service_name(service: str, port: str):
-        # some times nmap shows smb as netbios, but only overwrite this for port 445
-        if port == "445" and "netbios" in service:
-            return "smb"
-        if service in PortDetails.SERVICE_MAPPING:
-            return PortDetails.SERVICE_MAPPING[service]
-        return service
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, str]) -> "PortDetails":
-        return cls(data["port"], data["protocol"], data["state"], data["service"])
-
-
-class ThreadSafeServiceLookup:
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._cache: Dict[str, str] = {}
-
-    def get_service_name_for_port(
-        self, port: str, protocol: str = "tcp", default_service: str = "unknown?"
-    ):
-        if PortDetails.is_valid_port(port):
-            cache_id = port + protocol
-            if cache_id in self._cache:
-                return self._cache[cache_id]
-            with self._lock:
-                if cache_id in self._cache:
-                    return self._cache[cache_id]
-                try:
-                    service = socket.getservbyport(int(port), protocol)
-                    if service is None:
-                        service = default_service
-                except (socket.error, ValueError, TypeError):
-                    logging.debug(f"Lookup for {port} and {protocol} failed!")
-                    service = default_service
-                service = PortDetails.get_service_name(service, port)
-                self._cache[cache_id] = service
-                return service
-        else:
-            raise ValueError(f'Port "{port}" is not valid!')
-
-
-service_lookup = ThreadSafeServiceLookup()
-hostup_dict = defaultdict(dict)
-config = UnitasConfig()
-
-
-class HostScanData:
-    def __init__(self, ip: str):
-        if not HostScanData.is_valid_ip(ip):
-            raise ValueError(f"'{ip}' is not a valid ip!")
-        self.ip = ip
-        self.hostname: str = ""
-        self.ports: List[PortDetails] = []
-
-    @staticmethod
-    def is_valid_ip(address: str) -> bool:
-        try:
-            ip_address(address)
-            return True
-        except ValueError:
-            return False
-
-    def add_port_details(self, new_port: PortDetails):
-        if new_port is None:  # skip if new_port is None
-            return
-
-        for p in self.ports:
-            if p.port == new_port.port and p.protocol == new_port.protocol:
-                p.update(new_port)
-                return
-        # if the port did not exist, just add it
-        self.ports.append(new_port)
-
-    def add_port(
-        self,
-        port: str,
-        protocol: str,
-        state: str = "TBD",
-        service: str = "unknown?",
-        comment: str = "",
-    ) -> None:
-        new_port = PortDetails(port, protocol, state, service, comment)
-        self.add_port_details(new_port)
-
-    def set_hostname(self, hostname: str) -> None:
-        self.hostname = hostname
-
-    def get_sorted_ports(self) -> List[PortDetails]:
-        return sorted(self.ports, key=lambda p: (p.protocol, int(p.port)))
-
-    def __str__(self) -> str:
-        ports_str = ", ".join(str(port) for port in self.ports)
-        return f"{self.ip} ({self.hostname}): {ports_str}"
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "ip": self.ip,
-            "hostname": self.hostname,
-            "ports": [port.to_dict() for port in self.ports],
-        }
-
-    def to_markdown_rows(self) -> List[str]:
-        return [
-            f"|{self.ip}|{str(x)}|       |       |" for x in self.get_sorted_ports()
-        ]
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HostScanData":
-        host = cls(data["ip"])
-        host.hostname = data["hostname"]
-        for port_data in data["ports"]:
-            host.ports.append(PortDetails.from_dict(port_data))
-        return host
-
-
-class Convert(ABC):
-    def __init__(self, global_state: Dict[str, HostScanData] = None):
-        self.global_state = Convert.sort_global_state_by_ip(global_state or {})
-
-    @abstractmethod
-    def convert(self) -> str:
-        pass
-
-    @abstractmethod
-    def parse(self, content: str) -> Dict[str, HostScanData]:
-        pass
-
-    @staticmethod
-    def sort_global_state_by_ip(
-        global_state: Dict[str, HostScanData],
-    ) -> Dict[str, HostScanData]:
-        sorted_ips = sorted(global_state.keys(), key=ip_address)
-        return {ip: global_state[ip] for ip in sorted_ips}
 
 
 class GrepConverter(Convert):
