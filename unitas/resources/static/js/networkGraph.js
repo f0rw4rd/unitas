@@ -10,38 +10,79 @@ let savedViews = {};
 
 // Graph generation functions
 function renderGraph() {
-    if (!window.scanData) return;
-
-    const container = document.getElementById('graph-container');
-
-    // Clear previous graph
-    if (network) {
-        network.destroy();
-        network = null;
+    if (!scanData) {
+        console.error("Cannot render graph: scanData is not available");
+        return;
     }
 
-    // Process subnets for the network graph
-    processSubnets();
+    // Check for required dependencies
+    if (typeof vis === 'undefined') {
+        console.error("Cannot render graph: vis.js is not loaded");
+        return;
+    }
 
-    const { nodes, edges } = createGraphData();
+    const container = document.getElementById('graph-container');
+    if (!container) {
+        console.error("Cannot render graph: graph container element not found");
+        return;
+    }
 
-    nodesDataset = new vis.DataSet(nodes);
-    edgesDataset = new vis.DataSet(edges);
+    try {
+        // Clear previous graph
+        if (network) {
+            network.destroy();
+            network = null;
+        }
 
-    // Create graph data
-    const data = {
-        nodes: nodesDataset,
-        edges: edgesDataset
-    };
+        // Process subnets for the network graph
+        processSubnets();
 
-    // Configure graph options
-    const options = createGraphOptions();
+        const { nodes, edges } = createGraphData();
 
-    // Create network
-    network = new vis.Network(container, data, options);
+        if (!nodes || !edges) {
+            console.error("Failed to create graph data");
+            return;
+        }
 
-    setupNetworkEvents();
-    initializeMinimap(nodes, edges);
+        // Initialize datasets with error handling
+        try {
+            nodesDataset = new vis.DataSet(nodes);
+            edgesDataset = new vis.DataSet(edges);
+        } catch (error) {
+            console.error("Error creating datasets:", error);
+            return;
+        }
+
+        // Create graph data
+        const data = {
+            nodes: nodesDataset,
+            edges: edgesDataset
+        };
+
+        // Configure graph options
+        const options = createGraphOptions();
+
+        // Create network with error handling
+        try {
+            network = new vis.Network(container, data, options);
+            console.log("Network graph created successfully");
+        } catch (error) {
+            console.error("Error creating network graph:", error);
+            return;
+        }
+
+        setupNetworkEvents();
+
+        try {
+            initializeMinimap(nodes, edges);
+        } catch (error) {
+            console.error("Error initializing minimap (non-critical):", error);
+            // Continue even if minimap fails
+        }
+
+    } catch (error) {
+        console.error("Error in renderGraph:", error);
+    }
 }
 
 function createGraphData() {
@@ -254,7 +295,10 @@ function setupNetworkEvents() {
     });
 
     network.on("hoverNode", function (params) {
-        showTooltip(params.node, params.event.center);
+        // Make sure we have valid event coordinates
+        if (params.event && params.event.center) {
+            showTooltip(params.node, params.event.center);
+        }
     });
 
     network.on("blurNode", function () {
@@ -262,8 +306,11 @@ function setupNetworkEvents() {
     });
 
     network.on("hoverEdge", function (params) {
-        const edgeData = edgesDataset.get(params.edge);
-        showTooltip(params.edge, params.event.center, true, edgeData);
+        // Make sure we have valid event coordinates
+        if (params.event && params.event.center) {
+            const edgeData = edgesDataset.get(params.edge);
+            showTooltip(params.edge, params.event.center, true, edgeData);
+        }
     });
 
     network.on("blurEdge", function () {
@@ -282,6 +329,7 @@ function setupNetworkEvents() {
         }
     });
 }
+
 
 // Tooltip and node details functions
 function showNodeDetails(node) {

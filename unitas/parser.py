@@ -2,13 +2,13 @@ from abc import ABC, abstractmethod
 import glob
 import logging
 import os
-from unitas.utils import service_lookup, hostup_dict
 from typing import Dict, List, Optional, Tuple
 from xml.etree.ElementTree import ParseError
 import xml.etree.ElementTree as ET
-from xml.etree.ElementTree import ParseError, Element
+from xml.etree.ElementTree import ParseError
 import concurrent.futures
 
+from unitas.utils import service_lookup, hostup_dict
 from unitas.model import HostScanData, PortDetails, merge_states
 
 
