@@ -11,6 +11,9 @@ class PortDetails:
         state: str,
         service: str = "unknown?",
         comment: str = "",
+        source_type: str = "",
+        source_file: str = "",
+        detected_date: str = "",
     ):
         if not PortDetails.is_valid_port(port):
             raise ValueError(f'Port "{port}" is not valid!')
@@ -20,27 +23,65 @@ class PortDetails:
         self.service = service
         self.comment = comment
 
+        # Store sources as a list of dictionaries
+        self.sources = []
+        if source_type or source_file or detected_date:
+            self.add_source(source_type, source_file, detected_date)
+
+    def add_source(self, source_type: str, source_file: str, detected_date: str):
+        """Add a new source to the port information"""
+        source = {"type": source_type, "file": source_file, "date": detected_date}
+
+        # Check if this exact source already exists
+        if source not in self.sources:
+            self.sources.append(source)
+
+    @property
+    def source_type(self) -> str:
+        """Return the primary source type (for backwards compatibility)"""
+        return self.sources[0]["type"] if self.sources else ""
+
+    @property
+    def source_file(self) -> str:
+        """Return the primary source file (for backwards compatibility)"""
+        return self.sources[0]["file"] if self.sources else ""
+
+    @property
+    def detected_date(self) -> str:
+        """Return the primary detected date (for backwards compatibility)"""
+        return self.sources[0]["date"] if self.sources else ""
+
     def __str__(self) -> str:
         return f"{self.port}/{self.protocol}({self.service})"
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "port": self.port,
             "protocol": self.protocol,
             "state": self.state,
             "service": self.service,
             "comment": self.comment,
+            "sources": self.sources,
         }
 
     def __eq__(self, other):
         if not isinstance(other, PortDetails):
             return NotImplemented
-        return self.to_dict() == other.to_dict()
+        return (
+            self.port == other.port
+            and self.protocol == other.protocol
+            and self.state == other.state
+            and self.service == other.service
+            and self.comment == other.comment
+        )
 
     def __repr__(self) -> str:
-        return f"PortDetails({self.port}/{self.protocol} {self.state} {self.service} {self.comment})"
+        return f"PortDetails({self.port}/{self.protocol} {self.state} {self.service} {self.comment} sources:{len(self.sources)})"
 
     def update(self, other: "PortDetails"):
+        # Track if we updated anything significant
+        updated = False
+
         # check if service should be overwritten
         update_service = False
         if other.service != "unknown?" and self.service == "unknown?":
@@ -59,14 +100,22 @@ class PortDetails:
         if update_service:
             logging.debug(f"Updating service from {self.service} -> {other.service}")
             self.service = other.service
+            updated = True
+
         # update the comments if comment is set
         if not self.comment and other.comment:
             logging.debug(f"Updating comment from {self.comment} -> {other.comment}")
             self.comment = other.comment
+            updated = True
 
         if not self.state and other.state:
             logging.debug(f"Updating state from {self.state} -> {other.state}")
             self.state = other.state
+            updated = True
+
+        # Always merge sources regardless of whether we updated anything else
+        for source in other.sources:
+            self.add_source(source["type"], source["file"], source["date"])
 
     @staticmethod
     def is_valid_port(port: str) -> bool:
@@ -94,8 +143,34 @@ class PortDetails:
         return service
 
     @classmethod
-    def from_dict(cls, data: Dict[str, str]) -> "PortDetails":
-        return cls(data["port"], data["protocol"], data["state"], data["service"])
+    def from_dict(cls, data: Dict[str, Any]) -> "PortDetails":
+        port_details = cls(
+            data["port"],
+            data["protocol"],
+            data["state"],
+            data.get("service", "unknown?"),
+            data.get("comment", ""),
+        )
+
+        # Handle sources in the new format
+        if "sources" in data and isinstance(data["sources"], list):
+            for source in data["sources"]:
+                port_details.add_source(
+                    source.get("type", ""),
+                    source.get("file", ""),
+                    source.get("date", ""),
+                )
+        # Handle legacy format
+        elif any(
+            key in data for key in ["source_type", "source_file", "detected_date"]
+        ):
+            port_details.add_source(
+                data.get("source_type", ""),
+                data.get("source_file", ""),
+                data.get("detected_date", ""),
+            )
+
+        return port_details
 
 
 class HostScanData:
@@ -132,8 +207,20 @@ class HostScanData:
         state: str = "TBD",
         service: str = "unknown?",
         comment: str = "",
+        source_type: str = "",
+        source_file: str = "",
+        detected_date: str = "",
     ) -> None:
-        new_port = PortDetails(port, protocol, state, service, comment)
+        new_port = PortDetails(
+            port,
+            protocol,
+            state,
+            service,
+            comment,
+            source_type,
+            source_file,
+            detected_date,
+        )
         self.add_port_details(new_port)
 
     def set_hostname(self, hostname: str) -> None:
@@ -141,30 +228,6 @@ class HostScanData:
 
     def get_sorted_ports(self) -> List[PortDetails]:
         return sorted(self.ports, key=lambda p: (p.protocol, int(p.port)))
-
-    def __str__(self) -> str:
-        ports_str = ", ".join(str(port) for port in self.ports)
-        return f"{self.ip} ({self.hostname}): {ports_str}"
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "ip": self.ip,
-            "hostname": self.hostname,
-            "ports": [port.to_dict() for port in self.ports],
-        }
-
-    def to_markdown_rows(self) -> List[str]:
-        return [
-            f"|{self.ip}|{str(x)}|       |       |" for x in self.get_sorted_ports()
-        ]
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HostScanData":
-        host = cls(data["ip"])
-        host.hostname = data["hostname"]
-        for port_data in data["ports"]:
-            host.ports.append(PortDetails.from_dict(port_data))
-        return host
 
 
 def merge_states(

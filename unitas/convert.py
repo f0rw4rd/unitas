@@ -7,6 +7,7 @@ import time
 from typing import Dict
 
 from unitas import HostScanData
+from unitas.model import PortDetails
 from unitas.utils import get_version
 
 
@@ -52,13 +53,23 @@ class GrepConverter(Convert):
 
 
 class MarkdownConvert(Convert):
+    def __init__(
+        self, global_state: Dict[str, HostScanData] = None, show_origin: bool = False
+    ):
+        super().__init__(global_state)
+        self.show_origin = show_origin
+
     def convert(self, formatted: bool = False) -> str:
-        output = ["|IP|Hostname|Port|Status|Comment|"]
-        output.append("|--|--|--|--|---|")
+        if self.show_origin:
+            output = ["|IP|Hostname|Port|Status|Comment|Source|"]
+            output.append("|--|--|--|--|---|---|")
+        else:
+            output = ["|IP|Hostname|Port|Status|Comment|"]
+            output.append("|--|--|--|--|---|")
 
         max_ip_len = max_hostname_len = max_port_len = max_status_len = (
             max_comment_len
-        ) = 0
+        ) = max_source_len = 0
 
         if formatted:
             # Find the maximum length of each column
@@ -70,14 +81,44 @@ class MarkdownConvert(Convert):
                     max_port_len = max(max_port_len, len(port_info))
                     max_status_len = max(max_status_len, len(port.state))
                     max_comment_len = max(max_comment_len, len(port.comment))
+                    if self.show_origin:
+                        source_info = self._format_source_info(port)
+                        max_source_len = max(max_source_len, len(source_info))
 
         for host in self.global_state.values():
             for port in host.get_sorted_ports():
                 service = f"{port.port}/{port.protocol}({port.service})"
-                output.append(
-                    f"|{host.ip.ljust(max_ip_len)}|{host.hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{port.state.ljust(max_status_len)}|{port.comment.ljust(max_comment_len)}|"
-                )
+                if self.show_origin:
+                    source_info = self._format_source_info(port)
+                    output.append(
+                        f"|{host.ip.ljust(max_ip_len)}|{host.hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{port.state.ljust(max_status_len)}|{port.comment.ljust(max_comment_len)}|{source_info.ljust(max_source_len)}|"
+                    )
+                else:
+                    output.append(
+                        f"|{host.ip.ljust(max_ip_len)}|{host.hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{port.state.ljust(max_status_len)}|{port.comment.ljust(max_comment_len)}|"
+                    )
         return "\n".join(output) + "\n"
+
+    def _format_source_info(self, port: PortDetails) -> str:
+        """Format source information for display in markdown, handling multiple sources"""
+        if not hasattr(port, "sources") or not port.sources:
+            return ""
+
+        # For multiple sources, format them as a comma-separated list
+        source_strings = []
+        for source in port.sources:
+            parts = []
+            if source["type"]:
+                parts.append(source["type"])
+            if source["file"]:
+                parts.append(source["file"])
+            if source["date"]:
+                parts.append(source["date"])
+
+            if parts:
+                source_strings.append("/".join(parts))
+
+        return ", ".join(source_strings)
 
     def parse(self, content: str) -> Dict[str, HostScanData]:
         lines = content.strip().split("\n")
@@ -86,38 +127,107 @@ class MarkdownConvert(Convert):
                 f"Could not load markdown, markdown was only {len(lines)} lines. are you missing the two line header?"
             )
             return {}
+
+        # Check if header contains a source column
+        has_source_column = "|Source|" in lines[0] or "|source|" in lines[0]
+
         lines = lines[2:]  # Skip header and separator
         result = {}
         counter = 1
+
         for line in lines:
             counter += 1
-            match = re.match(
-                r"\s*\|([^|]+)\|\s*([^|]*)\s*\|\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|",
-                line.strip(),
-            )
-            if match:
-                ip, hostname, port, protocol, service, status, comment = match.groups()
-                ip = ip.strip()
-                if ip not in result:
-                    result[ip] = HostScanData(ip)
-                    if hostname.strip():
-                        result[ip].set_hostname(hostname.strip())
-                result[ip].add_port(
-                    port.strip(),
-                    protocol.strip(),
-                    status.strip() or "TBD",
-                    service.strip(),
-                    comment.strip(),
+            if has_source_column:
+                match = re.match(
+                    r"\s*\|([^|]+)\|\s*([^|]*)\s*\|\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|",
+                    line.strip(),
                 )
+                if match:
+                    ip, hostname, port, protocol, service, status, comment, source = (
+                        match.groups()
+                    )
+
+                    # Parse multiple source information from comma-separated format
+                    sources = []
+                    if source.strip():
+                        for source_entry in source.split(","):
+                            source_entry = source_entry.strip()
+                            if not source_entry:
+                                continue
+
+                            source_parts = [s.strip() for s in source_entry.split("/")]
+                            source_type = (
+                                source_parts[0] if len(source_parts) > 0 else ""
+                            )
+                            source_file = (
+                                source_parts[1] if len(source_parts) > 1 else ""
+                            )
+                            detected_date = (
+                                source_parts[2] if len(source_parts) > 2 else ""
+                            )
+
+                            sources.append(
+                                {
+                                    "type": source_type,
+                                    "file": source_file,
+                                    "date": detected_date,
+                                }
+                            )
+
+                    ip = ip.strip()
+                    if ip not in result:
+                        result[ip] = HostScanData(ip)
+                        if hostname.strip():
+                            result[ip].set_hostname(hostname.strip())
+
+                    # Create port details first
+                    port_details = PortDetails(
+                        port.strip(),
+                        protocol.strip(),
+                        status.strip() or "TBD",
+                        service.strip(),
+                        comment.strip(),
+                    )
+
+                    # Add sources
+                    for src in sources:
+                        port_details.add_source(src["type"], src["file"], src["date"])
+
+                    result[ip].add_port_details(port_details)
+                else:
+                    logging.error(
+                        f"Markdown error: Failed to parse line nr {counter}: {line}"
+                    )
             else:
-                logging.error(
-                    f"Markdown error: Failed to parse line nr {counter}: {line}"
+                match = re.match(
+                    r"\s*\|([^|]+)\|\s*([^|]*)\s*\|\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|",
+                    line.strip(),
                 )
+                if match:
+                    ip, hostname, port, protocol, service, status, comment = (
+                        match.groups()
+                    )
+                    ip = ip.strip()
+                    if ip not in result:
+                        result[ip] = HostScanData(ip)
+                        if hostname.strip():
+                            result[ip].set_hostname(hostname.strip())
+                    result[ip].add_port(
+                        port.strip(),
+                        protocol.strip(),
+                        status.strip() or "TBD",
+                        service.strip(),
+                        comment.strip(),
+                    )
+                else:
+                    logging.error(
+                        f"Markdown error: Failed to parse line nr {counter}: {line}"
+                    )
 
         return result
 
 
-class JsonExport(Convert):
+class JsonConverter(Convert):
     """
     Export scan results as a structured JSON file that can be loaded
     by the standalone HTML viewer or used for other data analysis.
@@ -127,9 +237,11 @@ class JsonExport(Convert):
         self,
         global_state: Dict[str, HostScanData] = None,
         hostup_dict: Dict[str, str] = None,
+        show_origin: bool = False,
     ):
         super().__init__(global_state)
         self.hostup_dict = hostup_dict or {}
+        self.show_origin = show_origin
 
     def convert(self) -> str:
         """Convert the scan data to a JSON string."""
@@ -143,17 +255,21 @@ class JsonExport(Convert):
                 "hasOpenPorts": len(host.ports) > 0,
             }
             for port in host.ports:
-                host_entry["ports"].append(
-                    {
-                        "port": port.port,
-                        "protocol": port.protocol,
-                        "service": port.service,
-                        "state": port.state,
-                        "comment": port.comment,
-                        "uncertain": "?" in port.service,
-                        "tls": "TLS" in port.comment,
-                    }
-                )
+                port_entry = {
+                    "port": port.port,
+                    "protocol": port.protocol,
+                    "service": port.service,
+                    "state": port.state,
+                    "comment": port.comment,
+                    "uncertain": "?" in port.service,
+                    "tls": "TLS" in port.comment,
+                }
+
+                # Include source information if requested
+                if self.show_origin and hasattr(port, "sources") and port.sources:
+                    port_entry["sources"] = port.sources
+
+                host_entry["ports"].append(port_entry)
             hosts_data.append(host_entry)
 
         # Prepare hosts-up data
@@ -172,6 +288,7 @@ class JsonExport(Convert):
                     "totalPorts": sum(len(host["ports"]) for host in hosts_data),
                     "hostsUp": len(hostup_data),
                 },
+                "includesOrigin": self.show_origin,
             },
             "hosts": hosts_data,
             "hostsUp": hostup_data,
@@ -179,48 +296,6 @@ class JsonExport(Convert):
 
         # Return pretty-printed JSON
         return json.dumps(data, indent=2)
-
-    def parse(self, content: str) -> Dict[str, HostScanData]:
-        """
-        Parse a JSON string back into a Unitas state structure.
-        This allows importing previously exported JSON data.
-        """
-        try:
-            data = json.loads(content)
-            result = {}
-
-            # Parse hosts
-            for host_entry in data.get("hosts", []):
-                ip = host_entry.get("ip")
-                if not ip or not HostScanData.is_valid_ip(ip):
-                    logging.warning(f"Invalid IP in JSON data: {ip}")
-                    continue
-
-                host = HostScanData(ip)
-                host.set_hostname(host_entry.get("hostname", ""))
-
-                for port_entry in host_entry.get("ports", []):
-                    try:
-                        host.add_port(
-                            port_entry.get("port", ""),
-                            port_entry.get("protocol", "tcp"),
-                            port_entry.get("state", "TBD"),
-                            port_entry.get("service", "unknown?"),
-                            port_entry.get("comment", ""),
-                        )
-                    except ValueError as e:
-                        logging.warning(f"Error adding port: {e}")
-
-                result[ip] = host
-
-            return result
-
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse JSON data: {e}")
-            return {}
-        except Exception as e:
-            logging.error(f"Error importing JSON data: {e}")
-            return {}
 
 
 def load_markdown_state(filename: str) -> Dict[str, HostScanData]:

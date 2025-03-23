@@ -149,6 +149,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "http?",
+                "sources": [],
                 "comment": "",
             },
         )
@@ -165,6 +166,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "unknown?",
+                "sources": [],
                 "comment": "",
             },
         )
@@ -181,6 +183,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "imap",
+                "sources": [],
                 "comment": "hMailServer imapd",
             },
         )
@@ -197,6 +200,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "https",
+                "sources": [],
                 "comment": "lighttpd;TLS",
             },
         )
@@ -213,6 +217,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "routeros-api",
+                "sources": [],
                 "comment": "MikroTik RouterOS API;TLS",
             },
         )
@@ -229,6 +234,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "unknown?",
+                "sources": [],
                 "comment": "",
             },
         )
@@ -245,6 +251,7 @@ class TestNmapParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "ftp",
+                "sources": [],
                 "comment": "ProFTPD or KnFTPD;TLS",
             },
         )
@@ -310,6 +317,7 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "https",
+                "sources": [],
                 "comment": "TLS",
             },
         )
@@ -327,6 +335,7 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "udp",
                 "state": "TBD",
                 "service": "snmp?",
+                "sources": [],
                 "comment": "",
             },
         )
@@ -352,6 +361,7 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "opsec-cvp?",
+                "sources": [],
                 "comment": "",
             },
         )
@@ -368,6 +378,7 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "rdp?",
+                "sources": [],
                 "comment": "",
             },
         )
@@ -512,6 +523,20 @@ class TestNmapHost(unittest.TestCase):
 
 
 class TestPortDetails(unittest.TestCase):
+    def test_source_information(self):
+        port = PortDetails(
+            "80", "tcp", "open", "http", "Web server", "nmap", "scan.xml", "2023-03-15"
+        )
+        self.assertEqual(port.source_type, "nmap")
+        self.assertEqual(port.source_file, "scan.xml")
+        self.assertEqual(port.detected_date, "2023-03-15")
+
+        # Test adding source information
+        port2 = PortDetails("443", "tcp", "open", "https")
+        port2.add_source("nmap", "scan.xml", "2023-03-15")
+        self.assertEqual(port2.source_type, "nmap")
+        self.assertEqual(port2.source_file, "scan.xml")
+
     def test_port_details_creation(self):
         port = PortDetails("80", "tcp", "open", "http")
         self.assertEqual(port.port, "80")
@@ -530,6 +555,7 @@ class TestPortDetails(unittest.TestCase):
             "protocol": "tcp",
             "state": "open",
             "service": "ssh",
+            "sources": [],
             "comment": "",
         }
         self.assertEqual(port.to_dict(), expected)

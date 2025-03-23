@@ -7,6 +7,7 @@ Unitas is a powerful network scan parser and analyzer tool designed to simplify 
 - Parse scan files from Nmap and Nessus
 - Merge multiple scan results into a single, comprehensive report per scanner 
 - Search for specific ports or services across all scanned hosts
+- Track source information for each port (which scanner and file detected it)
 - Generate well-formatted markdown reports for easy sharing and collaboration
 - Export scans from Nessus for seamless integration with your workflow
 - Identify hosts that are up but have no open ports
@@ -42,6 +43,7 @@ unitas /path/to/scan/folder [options]
 - `-m`, `--merge`: Merge scans in the folder
 - `-g`, `--grep`: Print host and ports in a grep-able format (including hosts that have no open ports)
 - `-j`, `--json`: Export scan results as a JSON file that can be loaded by the HTML viewer
+- `-o`, `--origin`: Show origin information (source scanner type, file, and date) for each port
 - `-H`, `--http-server`: Start an HTTP server with interactive visualization of scan results
 - `--port`: Specify the port for the HTTP server (default: 8000)
 - `--report-title`: Specify a custom title for the merged Nessus report

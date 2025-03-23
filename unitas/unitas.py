@@ -10,7 +10,7 @@ from hashlib import sha512
 from xml.etree.ElementTree import ParseError
 from unitas.convert import (
     GrepConverter,
-    JsonExport,
+    JsonConverter,
     MarkdownConvert,
     load_markdown_state,
 )
@@ -220,6 +220,14 @@ def main() -> None:
         help="Port to use for HTTP server (default: 8000)",
     )
 
+    parser.add_argument(
+        "-o",
+        "--origin",
+        action="store_true",
+        default=False,
+        help="Show origin information (source file and scanner type) for each port",
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -318,7 +326,7 @@ def main() -> None:
         logging.info("Starting HTTP server to visualize scan results")
 
         # Generate JSON data
-        json_exporter = JsonExport(final_state, hostup_dict)
+        json_exporter = JsonConverter(final_state, hostup_dict, args.origin)
         json_content = json_exporter.convert()
 
         # Start the HTTP server
@@ -326,7 +334,7 @@ def main() -> None:
         return
 
     if args.json:
-        json_exporter = JsonExport(final_state, hostup_dict)
+        json_exporter = JsonConverter(final_state, hostup_dict, args.origin)
         json_content = json_exporter.convert()
         output_file = f"unitas.json"
         with open(output_file, "w", encoding="utf-8") as f:
@@ -353,7 +361,7 @@ def main() -> None:
         else:
             logging.info(f"No systems found with port/service '{args.search}'")
     else:
-        md_converter = MarkdownConvert(final_state)
+        md_converter = MarkdownConvert(final_state, args.origin)
         md_content = md_converter.convert(True)
 
         logging.info("Updated state saved to state.md")
