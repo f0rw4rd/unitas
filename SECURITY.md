@@ -8,4 +8,4 @@
 
 ## Reporting a Vulnerability
 
-Please up and a bug issue. 
+Please open a bug issue. 
