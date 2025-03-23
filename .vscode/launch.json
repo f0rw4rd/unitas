@@ -8,7 +8,7 @@
             "name": "Tests",
             "type": "debugpy",
             "request": "launch",
-            "program": "tests/test_unitas.py",
+            "program": "tests/test_unitas/unitas.py",
             "console": "integratedTerminal",
             "justMyCode": false
         },
@@ -16,7 +16,7 @@
             "name": "Start Parser",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -27,7 +27,7 @@
             "name": "Start Parser with update",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -39,7 +39,7 @@
             "name": "Start Parser with search",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -53,7 +53,7 @@
             "name": "Start Parser with search (without url)",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -66,7 +66,7 @@
             "name": "Start Parser with only service scanned ports",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -78,7 +78,7 @@
             "name": "Start Parser with rescan",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -90,7 +90,7 @@
             "name": "Start Parser with export",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-e",
@@ -102,7 +102,7 @@
             "name": "Start Parser with merger",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -114,7 +114,7 @@
             "name": "Start Parser with json export",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
@@ -126,7 +126,7 @@
             "name": "Start Parser HTTP server",
             "type": "debugpy",
             "request": "launch",
-            "program": "unitas.py",
+            "program": "unitas/unitas.py",
             "console": "integratedTerminal",
             "args": [
                 "-v",
