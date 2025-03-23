@@ -26,16 +26,6 @@ document.addEventListener('DOMContentLoaded', function () {
     debugToggle.style.bottom = '10px';
     debugToggle.style.left = '10px';
     debugToggle.style.zIndex = '10000';
-    debugToggle.onclick = function () {
-        const panel = document.getElementById('debug-output');
-        if (panel.style.display === 'none') {
-            panel.style.display = 'block';
-            this.textContent = 'Hide Debug Info';
-        } else {
-            panel.style.display = 'none';
-            this.textContent = 'Show Debug Info';
-        }
-    };
     document.body.appendChild(debugToggle);
 
     function logDebug(message) {
@@ -57,8 +47,8 @@ document.addEventListener('DOMContentLoaded', function () {
         };
     }
 
-    // Make sure scanData is in global scope
-    window.scanData = null;
+    // Make sure window.scanData is in global scope
+    window.window.scanData = null;
 
     // Patch the validateAndDisplayData function to add more debugging
     const originalValidateAndDisplayData = window.validateAndDisplayData;
@@ -86,8 +76,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
         logDebug(`Data looks valid. Found ${data.hosts.length} hosts and ${data.hostsUp ? data.hostsUp.length : 0} hosts up`);
 
-        // Make sure scanData is globally available
-        window.scanData = data;
+        // Make sure window.scanData is globally available
+        window.window.scanData = data;
 
         try {
             // Switch views
@@ -170,7 +160,7 @@ document.addEventListener('DOMContentLoaded', function () {
             logDebug(`Data loaded successfully, contains ${Object.keys(data).length} top-level keys`);
 
             // Store data globally
-            window.scanData = data;
+            window.window.scanData = data;
 
             // Call validation function
             validateAndDisplayData(data);
@@ -217,7 +207,6 @@ function fixUIDisplay() {
     const hostsView = document.getElementById('hosts-view');
     if (hostsView) {
         hostsView.classList.add('active');
-        hostsView.style.display = 'block';
         console.log("Activated hosts-view");
     }
 
@@ -226,7 +215,7 @@ function fixUIDisplay() {
     console.log("Hosts table rows:", hostsTable ? hostsTable.children.length : 'table not found');
 
     // If table is empty but we have data, force repopulate
-    if (hostsTable && hostsTable.children.length === 0 && window.scanData && window.scanData.hosts.length > 0) {
+    if (hostsTable && hostsTable.children.length === 0 && window.window.scanData && window.window.scanData.hosts.length > 0) {
         console.log("Re-populating tables");
         window.populateTables();
     }
@@ -246,14 +235,14 @@ function fixUIDisplay() {
         console.log("No tables have content. Attempting manual population");
 
         // 5. Try manual population as a fallback
-        if (window.scanData && window.scanData.hosts.length > 0) {
+        if (window.window.scanData && window.window.scanData.hosts.length > 0) {
             const hostsTable = document.querySelector('#hosts-table tbody');
             if (hostsTable) {
                 // Clear table
                 hostsTable.innerHTML = '';
 
                 // Manually add rows
-                window.scanData.hosts.forEach(host => {
+                window.window.scanData.hosts.forEach(host => {
                     const row = document.createElement('tr');
 
                     const ipCell = document.createElement('td');
@@ -282,21 +271,21 @@ function fixUIDisplay() {
 
 // Function to manually update stats
 function updateStatsDisplay() {
-    if (!window.scanData) return;
+    if (!window.window.scanData) return;
 
-    document.getElementById('total-hosts').textContent = window.scanData.hosts.length;
+    document.getElementById('total-hosts').textContent = window.window.scanData.hosts.length;
 
     let totalPorts = 0;
-    window.scanData.hosts.forEach(host => {
+    window.window.scanData.hosts.forEach(host => {
         totalPorts += host.ports.length;
     });
     document.getElementById('total-ports').textContent = totalPorts;
 
-    document.getElementById('up-hosts').textContent = window.scanData.hostsUp ? window.scanData.hostsUp.length : 0;
+    document.getElementById('up-hosts').textContent = window.window.scanData.hostsUp ? window.window.scanData.hostsUp.length : 0;
 
     // Count unique services
     const services = new Set();
-    window.scanData.hosts.forEach(host => {
+    window.window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             const cleanService = port.service.replace('?', '');
             services.add(cleanService);

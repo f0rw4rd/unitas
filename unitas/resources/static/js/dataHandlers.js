@@ -1,5 +1,4 @@
 // Global state
-let scanData = null;
 let serviceTypes = new Set();
 let subnetGroups = {};
 
@@ -16,8 +15,8 @@ function handleFile(file) {
 
     reader.onload = function (e) {
         try {
-            scanData = JSON.parse(e.target.result);
-            validateAndDisplayData(scanData);
+            window.scanData = JSON.parse(e.target.result);
+            validateAndDisplayData(window.scanData);
         } catch (error) {
             console.error('Error parsing JSON:', error);
             showError('Invalid JSON file. Please select a valid Unitas export file.');
@@ -80,21 +79,21 @@ function hideLoading() {
 
 // Stats calculations
 function updateStats() {
-    if (!scanData) return;
+    if (!window.scanData) return;
 
-    document.getElementById('total-hosts').textContent = scanData.hosts.length;
+    document.getElementById('total-hosts').textContent = window.scanData.hosts.length;
 
     let totalPorts = 0;
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         totalPorts += host.ports.length;
     });
     document.getElementById('total-ports').textContent = totalPorts;
 
-    document.getElementById('up-hosts').textContent = scanData.hostsUp ? scanData.hostsUp.length : 0;
+    document.getElementById('up-hosts').textContent = window.scanData.hostsUp ? window.scanData.hostsUp.length : 0;
 
     // Get unique services
     serviceTypes.clear();
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             const cleanService = port.service.replace('?', '');
             serviceTypes.add(cleanService);
@@ -118,7 +117,7 @@ function populateServiceFilter() {
 function processSubnets() {
     subnetGroups = {};
 
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         const subnet = getSubnet(host.ip);
 
         if (!subnetGroups[subnet]) {
@@ -135,8 +134,8 @@ function processSubnets() {
         });
     });
 
-    if (scanData.hostsUp) {
-        scanData.hostsUp.forEach(host => {
+    if (window.scanData.hostsUp) {
+        window.scanData.hostsUp.forEach(host => {
             const subnet = getSubnet(host.ip);
 
             if (!subnetGroups[subnet]) {
@@ -162,12 +161,12 @@ function getSubnetGroup(ip) {
 
 // Export functions
 function exportNetworkAsMarkdown() {
-    if (!scanData) return;
+    if (!window.scanData) return;
 
     // Generate markdown content
     let markdown = "|IP|Hostname|Port|Status|Comment|\n|--|--|--|--|---|\n";
 
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             const ip = host.ip;
             const hostname = host.hostname || '';

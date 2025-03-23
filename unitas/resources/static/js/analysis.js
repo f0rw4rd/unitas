@@ -33,7 +33,7 @@ function runAnalysis() {
 function findCommonServices() {
     const services = {};
 
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         const uniqueServices = new Set();
 
         host.ports.forEach(port => {
@@ -57,7 +57,7 @@ function findCommonServices() {
     let result = "<p>Services found on multiple hosts:</p><ul>";
 
     commonServices.forEach(([service, count]) => {
-        const percentage = Math.round((count / scanData.hosts.length) * 100);
+        const percentage = Math.round((count / window.scanData.hosts.length) * 100);
         result += `<li><strong>${service}</strong>: Found on ${count} hosts (${percentage}%)</li>`;
     });
 
@@ -94,7 +94,7 @@ function findUnusualPorts() {
     const highPorts = [];
     const nonStandardPorts = [];
 
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             const portNum = parseInt(port.port);
 
@@ -185,7 +185,7 @@ function findUnusualPorts() {
 function findMostConnectedHosts() {
     const hosts = {};
 
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         hosts[host.ip] = {
             ip: host.ip,
             hostname: host.hostname,

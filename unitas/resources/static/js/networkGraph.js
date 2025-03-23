@@ -10,7 +10,7 @@ let savedViews = {};
 
 // Graph generation functions
 function renderGraph() {
-    if (!scanData) return;
+    if (!window.scanData) return;
 
     const container = document.getElementById('graph-container');
 
@@ -52,7 +52,7 @@ function createGraphData() {
     const servicesMap = new Map();
 
     // Process hosts
-    scanData.hosts.forEach((host) => {
+    window.scanData.hosts.forEach((host) => {
         const hostId = nextId++;
         nodeIdMap[host.ip] = hostId;
 
@@ -125,8 +125,8 @@ function createGraphData() {
     });
 
     // Add hosts that are up but have no open ports
-    if (scanData.hostsUp && document.getElementById("show-up-hosts").checked) {
-        scanData.hostsUp.forEach((host) => {
+    if (window.scanData.hostsUp && document.getElementById("show-up-hosts").checked) {
+        window.scanData.hostsUp.forEach((host) => {
             nodes.push({
                 id: nextId++,
                 label: host.ip,
@@ -381,7 +381,7 @@ function hideTooltip() {
 // Graph utility functions
 function countServiceInstances(serviceName) {
     let count = 0;
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             if (port.service.replace("?", "") === serviceName) {
                 count++;

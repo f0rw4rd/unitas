@@ -1,6 +1,6 @@
 // Table rendering functions
 function populateTables() {
-    if (!scanData) return;
+    if (!window.scanData) return;
 
     populateHostsTable();
     populatePortsTable();
@@ -12,12 +12,12 @@ function populateHostsTable() {
     const hostsTable = document.querySelector('#hosts-table tbody');
     hostsTable.innerHTML = '';
 
-    if (scanData.hosts.length === 0) {
+    if (window.scanData.hosts.length === 0) {
         renderEmptyTableMessage(hostsTable, 3, 'No hosts with open ports found.');
         return;
     }
 
-    scanData.hosts.sort((a, b) => {
+    window.scanData.hosts.sort((a, b) => {
         // Sort by IP address
         const ipA = a.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
         const ipB = b.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
@@ -64,14 +64,14 @@ function populatePortsTable() {
     const portsTable = document.querySelector('#ports-table tbody');
     portsTable.innerHTML = '';
 
-    if (scanData.hosts.length === 0 || !scanData.hosts.some(host => host.ports.length > 0)) {
+    if (window.scanData.hosts.length === 0 || !window.scanData.hosts.some(host => host.ports.length > 0)) {
         renderEmptyTableMessage(portsTable, 7, 'No open ports found.');
         return;
     }
 
     const allPorts = [];
 
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             allPorts.push({
                 ip: host.ip,
@@ -135,7 +135,7 @@ function populateServicesTable() {
     const servicesTable = document.querySelector('#services-table tbody');
     servicesTable.innerHTML = '';
 
-    if (scanData.hosts.length === 0 || !scanData.hosts.some(host => host.ports.length > 0)) {
+    if (window.scanData.hosts.length === 0 || !window.scanData.hosts.some(host => host.ports.length > 0)) {
         renderEmptyTableMessage(servicesTable, 3, 'No services found.');
         return;
     }
@@ -143,7 +143,7 @@ function populateServicesTable() {
     // Group by service
     const serviceGroups = {};
 
-    scanData.hosts.forEach(host => {
+    window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             const cleanService = port.service.replace('?', '');
             if (!serviceGroups[cleanService]) {
@@ -182,12 +182,12 @@ function populateUpHostsTable() {
     const upHostsTable = document.querySelector('#up-hosts-table tbody');
     upHostsTable.innerHTML = '';
 
-    if (!scanData.hostsUp || scanData.hostsUp.length === 0) {
+    if (!window.scanData.hostsUp || window.scanData.hostsUp.length === 0) {
         renderEmptyTableMessage(upHostsTable, 2, 'No hosts that are up without open ports.');
         return;
     }
 
-    scanData.hostsUp.sort((a, b) => {
+    window.scanData.hostsUp.sort((a, b) => {
         const ipA = a.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
         const ipB = b.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
         return ipA.localeCompare(ipB);

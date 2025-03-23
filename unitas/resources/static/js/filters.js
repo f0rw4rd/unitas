@@ -37,7 +37,7 @@ function applyFilters() {
 
     // Filter by port range
     if (portMin > 1 || portMax < 65535) {
-        scanData.hosts.forEach(host => {
+        window.scanData.hosts.forEach(host => {
             const portsInRange = host.ports.filter(port => {
                 const portNumber = parseInt(port.port);
                 return portNumber >= portMin && portNumber <= portMax;

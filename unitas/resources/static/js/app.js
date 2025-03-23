@@ -1,5 +1,5 @@
 // Main application initialization
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     // DOM Elements
     const initialScreen = document.getElementById('initial-screen');
     const dataView = document.getElementById('data-view');
@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const loadingOverlay = document.getElementById('loading-overlay');
     const nodeDetails = document.getElementById('node-details');
     const searchInput = document.getElementById('search');
-    
+
     // Setup drag and drop handlers
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         dropArea.addEventListener(eventName, preventDefaults, false);
@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Handle file drop
-    dropArea.addEventListener('drop', function(e) {
+    dropArea.addEventListener('drop', function (e) {
         const dt = e.dataTransfer;
         const files = dt.files;
 
@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }, false);
 
     // Handle file input
-    fileInput.addEventListener('change', function() {
+    fileInput.addEventListener('change', function () {
         if (this.files.length === 1) {
             handleFile(this.files[0]);
         } else {
@@ -60,23 +60,23 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Handle reload button
-    reloadBtn.addEventListener('click', function() {
+    reloadBtn.addEventListener('click', function () {
         initialScreen.classList.remove('hidden');
         dataView.classList.add('hidden');
         errorMessage.classList.add('hidden');
         fileInput.value = '';
-        scanData = null;
-        
+        window.scanData = null;
+
         if (network) {
             network.destroy();
             network = null;
         }
-        
+
         if (minimapNetwork) {
             minimapNetwork.destroy();
             minimapNetwork = null;
         }
-        
+
         pinnedNodes.clear();
         filteredItems.hosts.clear();
         filteredItems.services.clear();
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const viewId = item.getAttribute('data-view');
             document.getElementById(viewId).classList.add('active');
 
-            if (viewId === 'graph-view' && scanData) {
+            if (viewId === 'graph-view' && window.scanData) {
                 if (!network) {
                     renderGraph();
                 }
@@ -106,7 +106,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Search functionality
-    searchInput.addEventListener('input', function() {
+    searchInput.addEventListener('input', function () {
         const searchTerm = this.value.toLowerCase();
         filterTables(searchTerm);
     });
@@ -119,10 +119,10 @@ document.addEventListener('DOMContentLoaded', function() {
             filterPortsTableByStatus(btn.getAttribute('data-status').toLowerCase());
         });
     });
-    
+
     // Setup network graph event handlers
     setupNetworkEventHandlers();
-    
+
     // Check for auto-load data from URL parameters
     checkForAutoLoadData();
 });
@@ -139,14 +139,14 @@ function setupNetworkEventHandlers() {
     document.getElementById('export-png').addEventListener('click', exportNetworkImage);
     document.getElementById('save-view').addEventListener('click', saveCurrentView);
     document.getElementById('run-analysis').addEventListener('click', runAnalysis);
-    
+
     // Filter controls
     document.getElementById('show-up-hosts').addEventListener('change', refreshGraph);
     document.getElementById('show-uncertain').addEventListener('change', applyFilters);
     document.getElementById('highlight-tls').addEventListener('change', highlightTlsServices);
-    
+
     // Node size slider
-    document.getElementById('node-size').addEventListener('input', function() {
+    document.getElementById('node-size').addEventListener('input', function () {
         if (network) {
             network.setOptions({
                 nodes: {
@@ -158,12 +158,12 @@ function setupNetworkEventHandlers() {
             });
         }
     });
-    
+
     // Layout selection
     document.querySelectorAll('input[name="layout"]').forEach(radio => {
-        radio.addEventListener('change', function() {
+        radio.addEventListener('change', function () {
             if (!network) return;
-            
+
             const positions = network.getPositions();
             network.setOptions({
                 layout: getSelectedLayout()
@@ -196,7 +196,7 @@ function setupEventHandlers() {
             const viewId = item.getAttribute('data-view');
             document.getElementById(viewId).classList.add('active');
 
-            if (viewId === 'graph-view' && scanData) {
+            if (viewId === 'graph-view' && window.scanData) {
                 if (!network) {
                     renderGraph();
                 }
@@ -209,7 +209,7 @@ function checkForAutoLoadData() {
     // Function to check for URL parameters to auto-load data
     const urlParams = new URLSearchParams(window.location.search);
     const dataUrl = urlParams.get('data');
-    
+
     if (dataUrl) {
         // Auto-load data from the specified URL
         fetch(dataUrl)
@@ -220,7 +220,7 @@ function checkForAutoLoadData() {
                 return response.json();
             })
             .then(data => {
-                scanData = data;
+                window.scanData = data;
                 validateAndDisplayData(data);
             })
             .catch(error => {
@@ -228,13 +228,13 @@ function checkForAutoLoadData() {
                 showError(`Error loading data: ${error.message}`);
             });
     }
-    
+
     // Check if we have data in localStorage
     const storedData = localStorage.getItem('unitasData');
     if (storedData && !dataUrl) {
         try {
             const data = JSON.parse(storedData);
-            scanData = data;
+            window.scanData = data;
             validateAndDisplayData(data);
         } catch (error) {
             console.error('Error loading stored data:', error);
@@ -246,7 +246,7 @@ function checkForAutoLoadData() {
 // Add auto-load functionality (if using URL-loaded JSON data)
 function tryLoadFromUrl(url) {
     showLoading();
-    
+
     fetch(url)
         .then(response => {
             if (!response.ok) {
@@ -255,7 +255,7 @@ function tryLoadFromUrl(url) {
             return response.json();
         })
         .then(data => {
-            scanData = data;
+            window.scanData = data;
             validateAndDisplayData(data);
         })
         .catch(error => {
