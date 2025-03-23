@@ -12,6 +12,7 @@ description = "unitas - A tool to help with nessus and nmap scans"
 requires-python = ">=3.8"
 dependencies = [
     "requests",
+    "manuf2"
 ]
 readme = "README.md"
 license = {text = "GPL-3.0"}

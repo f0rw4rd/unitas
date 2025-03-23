@@ -25,6 +25,18 @@
             ]
         },
         {
+            "name": "Start Parser with MAC table",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "unitas.unitas",
+            "console": "integratedTerminal",
+            "args": [
+                "-v",
+                "-M",
+                "tests"
+            ]
+        },
+        {
             "name": "Start Parser with update",
             "type": "debugpy",
             "request": "launch",

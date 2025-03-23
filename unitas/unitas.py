@@ -11,6 +11,7 @@ from xml.etree.ElementTree import ParseError
 from unitas.convert import (
     GrepConverter,
     JsonConverter,
+    MacAddressReport,
     MarkdownConvert,
     load_markdown_state,
 )
@@ -227,6 +228,13 @@ def main() -> None:
         default=False,
         help="Show origin information (source file and scanner type) for each port",
     )
+    parser.add_argument(
+        "-M",
+        "--mac-report",
+        action="store_true",
+        default=False,
+        help="Generate a report of MAC addresses found in scans",
+    )
 
     args = parser.parse_args()
 
@@ -322,6 +330,27 @@ def main() -> None:
         print(grep_conv.convert_with_up(hostup_dict))
         return
 
+    if args.mac_report:
+        mac_report = MacAddressReport(
+            final_state,
+            show_origin=args.origin,
+            include_up_hosts=True,
+            hostup_dict=hostup_dict,
+        )
+        report_content = mac_report.convert()
+        output_file = f"mac_report.md"
+
+        # Write the report to file
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(report_content)
+
+        logging.info(f"MAC address report saved to {os.path.abspath(output_file)}")
+
+        # Also print to console
+        print()
+        print(report_content)
+        return
+
     if args.http_server:
         logging.info("Starting HTTP server to visualize scan results")
 
@@ -335,7 +364,7 @@ def main() -> None:
 
     if args.json:
         json_exporter = JsonConverter(final_state, hostup_dict, args.origin)
-        json_content = json_exporter.convert()
+        json_content = json_exporter.convert(True)
         output_file = f"unitas.json"
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(json_content)

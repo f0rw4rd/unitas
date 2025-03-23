@@ -5,6 +5,7 @@ import os
 import socket
 import threading
 from typing import Dict, List
+from manuf2 import manuf
 
 from unitas.model import HostScanData, PortDetails
 
@@ -17,6 +18,33 @@ try:
         __version__ = "dev-version"
 except ImportError:
     __version__ = "dev-version"  # Fallback for older Python versions
+
+
+class MacVendorLookup:
+    def __init__(self):
+        self._parser = manuf.MacParser()
+        self._cache = {}
+
+    def lookup(self, mac_address: str) -> str:
+        if not mac_address:
+            return ""
+
+        if mac_address in self._cache:
+            return self._cache[mac_address]
+
+        try:
+            result = self._parser.get_all(mac_address)
+            if result and result.manuf:
+                vendor = result.manuf
+                if result.manuf_long and result.manuf_long != result.manuf:
+                    vendor = result.manuf_long
+                self._cache[mac_address] = vendor
+                return vendor
+        except Exception as e:
+            logging.debug(f"Error looking up MAC vendor for {mac_address}: {e}")
+
+        self._cache[mac_address] = ""
+        return ""
 
 
 def get_version() -> str:
@@ -88,6 +116,7 @@ class ThreadSafeServiceLookup:
 service_lookup = ThreadSafeServiceLookup()
 hostup_dict = defaultdict(dict)
 config = UnitasConfig()
+mac_vendor_lookup = MacVendorLookup()
 
 
 def search_port_or_service(

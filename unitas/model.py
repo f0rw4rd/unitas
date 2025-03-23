@@ -23,7 +23,6 @@ class PortDetails:
         self.service = service
         self.comment = comment
 
-        # Store sources as a list of dictionaries
         self.sources = []
         if source_type or source_file or detected_date:
             self.add_source(source_type, source_file, detected_date)
@@ -179,7 +178,11 @@ class HostScanData:
             raise ValueError(f"'{ip}' is not a valid ip!")
         self.ip = ip
         self.hostname: str = ""
+        self.mac_address: str = ""
         self.ports: List[PortDetails] = []
+
+    def set_mac_address(self, mac_address: str) -> None:
+        self.mac_address = mac_address
 
     @staticmethod
     def is_valid_ip(address: str) -> bool:
@@ -190,14 +193,33 @@ class HostScanData:
             return False
 
     def add_port_details(self, new_port: PortDetails):
+        """Add a new port or update an existing one, preserving sources"""
         if new_port is None:  # skip if new_port is None
             return
 
         for p in self.ports:
             if p.port == new_port.port and p.protocol == new_port.protocol:
+                # Preserve sources when updating a port
+                existing_sources = getattr(p, "sources", [])
                 p.update(new_port)
+
+                # Ensure sources attribute exists
+                if not hasattr(p, "sources"):
+                    p.sources = []
+
+                # Merge sources from both ports
+                new_sources = getattr(new_port, "sources", [])
+                for source in new_sources:
+                    if source not in p.sources:
+                        p.sources.append(source)
+
+                # Restore any existing sources that weren't in the new port
+                for source in existing_sources:
+                    if source not in p.sources:
+                        p.sources.append(source)
                 return
-        # if the port did not exist, just add it
+
+        # If the port did not exist, just add it (sources are already included)
         self.ports.append(new_port)
 
     def add_port(
@@ -228,6 +250,24 @@ class HostScanData:
 
     def get_sorted_ports(self) -> List[PortDetails]:
         return sorted(self.ports, key=lambda p: (p.protocol, int(p.port)))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ip": self.ip,
+            "hostname": self.hostname,
+            "mac_address": self.mac_address,
+            "ports": [port.to_dict() for port in self.ports],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "HostScanData":
+        host = cls(data["ip"])
+        host.hostname = data["hostname"]
+        if "mac_address" in data:
+            host.mac_address = data["mac_address"]
+        for port_data in data["ports"]:
+            host.ports.append(PortDetails.from_dict(port_data))
+        return host
 
 
 def merge_states(

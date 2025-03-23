@@ -59,12 +59,30 @@ class NessusParser(ScanParser):
     def get_scan_type(self) -> str:
         return "nessus"
 
-    def parse(self) -> Dict[str, HostScanData]:
-        # Try to extract scan date from Nessus file
-        report_element = self.root.find(".//Report")
-        if report_element is not None:
-            self.scan_date = report_element.get("name", "")
+    def _parse_mac_address(self, block: ET.Element) -> Optional[str]:
+        """Extract MAC address from Nessus plugin output."""
+        # Look for ping plugin (plugin ID 10180)
+        ping_item = block.find(".//ReportItem[@pluginID='10180']")
+        if ping_item is not None:
+            plugin_output = ping_item.find("plugin_output")
+            if plugin_output is not None and plugin_output.text:
+                # Extract MAC address from plugin output using regex
+                import re
 
+                mac_match = re.search(
+                    r"Hardware address\s*:\s*([0-9A-Fa-f:]{17})", plugin_output.text
+                )
+                if mac_match:
+                    return mac_match.group(1)
+
+        # As a fallback, check MAC address tag
+        mac_tag = block.find(".//tag[@name='mac-address']")
+        if mac_tag is not None and mac_tag.text:
+            return mac_tag.text
+
+        return None
+
+    def parse(self) -> Dict[str, HostScanData]:
         for block in self.root.findall(".//ReportHost"):
             name: str = block.attrib.get("name", "")
             hostname: Optional[str] = None
@@ -85,12 +103,20 @@ class NessusParser(ScanParser):
             host = HostScanData(ip)
             if hostname:
                 host.set_hostname(hostname)
+
+            # Extract MAC address
+            mac_address = self._parse_mac_address(block)
+            if mac_address:
+                host.set_mac_address(mac_address)
+                logging.debug(
+                    f"Found MAC address in Nessus scan for {ip}: {mac_address}"
+                )
+
             plugin_found = (
                 self._parse_service_detection(block, host) > 0
                 or self._parse_port_scanners(block, host) > 0
             )
-            # the idea here is if the host has some version or port scan, it must be up
-            # sofar i have not seen a nessus file w
+
             if plugin_found and len(host.ports) == 0:
                 if not ip in hostup_dict:
                     hostup_dict[ip] = "nessus plugin seen"
@@ -210,19 +236,6 @@ class NmapParser(ScanParser):
         return "nmap"
 
     def parse(self) -> Dict[str, HostScanData]:
-        if self.root.get("start"):
-            try:
-                start_timestamp = self.root.get("start")
-                self.scan_date = self.root.get("startstr", "")
-                if not self.scan_date and start_timestamp:
-                    import datetime
-
-                    self.scan_date = datetime.datetime.fromtimestamp(
-                        int(start_timestamp)
-                    ).strftime("%Y-%m-%d %H:%M:%S")
-            except (ValueError, TypeError):
-                self.scan_date = ""
-
         for host in self.root.findall(".//host"):
             status = host.find(".//status")
             if status is not None and status.attrib.get("state") == "up":
@@ -231,8 +244,20 @@ class NmapParser(ScanParser):
                     host_ip: str = address.attrib.get("addr", "")
                     h = HostScanData(ip=host_ip)
 
+                    # Extract MAC address if available
+                    mac_elem = host.find(".//address[@addrtype='mac']")
+                    if mac_elem is not None:
+                        mac_address = mac_elem.attrib.get("addr", "")
+                        if mac_address:
+                            h.set_mac_address(mac_address)
+                            vendor = mac_elem.attrib.get("vendor", "")
+                            logging.debug(
+                                f"Found MAC address: {mac_address} (Vendor: {vendor})"
+                            )
+
+                    # Continue with existing logic
                     self._parse_ports(host, h)
-                    if len(h.ports) == 0:  # do not parse host that have no IP
+                    if len(h.ports) == 0:
                         if not host_ip in hostup_dict:
                             reason = status.attrib.get("reason", "")
                             if reason and not reason == "user-set":
@@ -246,7 +271,6 @@ class NmapParser(ScanParser):
                         for x in hostnames:
                             if "name" in x.attrib:
                                 h.set_hostname(x.attrib.get("name"))
-                                # prefer the user given hostname instead of the PTR
                                 if x.attrib.get("type", "") == "user":
                                     break
         return self.data

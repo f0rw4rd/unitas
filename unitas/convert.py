@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import time
-from typing import Dict
+from typing import Dict, List, Optional
 
 from unitas import HostScanData
 from unitas.model import PortDetails
@@ -32,7 +32,6 @@ class Convert(ABC):
 
 
 class GrepConverter(Convert):
-
     def convert_with_up(self, hostup_dict: dict) -> str:
         output = []
         for ip, reason in hostup_dict.items():
@@ -241,17 +240,37 @@ class JsonConverter(Convert):
         self.hostup_dict = hostup_dict or {}
         self.show_origin = show_origin
 
-    def convert(self) -> str:
+    def convert(self, formatted: bool = False) -> str:
         """Convert the scan data to a JSON string."""
+        vendor_lookup = None
+        try:
+            from unitas.utils import mac_vendor_lookup
+
+            vendor_lookup = mac_vendor_lookup
+        except ImportError:
+            pass
+
         # Prepare hosts data
         hosts_data = []
         for ip, host in self.global_state.items():
+            # Get MAC vendor if available
+            vendor = ""
+            if vendor_lookup and host.mac_address:
+                vendor = vendor_lookup.lookup(host.mac_address)
+
             host_entry = {
                 "ip": ip,
                 "hostname": host.hostname,
+                "mac_address": host.mac_address or "",
+                "vendor": vendor,
                 "ports": [],
                 "hasOpenPorts": len(host.ports) > 0,
             }
+
+            # Include MAC sources if showing origin
+            if self.show_origin and hasattr(host, "mac_sources") and host.mac_sources:
+                host_entry["mac_sources"] = host.mac_sources
+
             for port in host.ports:
                 port_entry = {
                     "port": port.port,
@@ -287,13 +306,177 @@ class JsonConverter(Convert):
                     "hostsUp": len(hostup_data),
                 },
                 "includesOrigin": self.show_origin,
+                "includesMacAddresses": any(
+                    host.get("mac_address") for host in hosts_data
+                ),
+                "includesVendorInfo": vendor_lookup is not None,
             },
             "hosts": hosts_data,
             "hostsUp": hostup_data,
         }
 
-        # Return pretty-printed JSON
-        return json.dumps(data, indent=2)
+        if formatted:
+            return json.dumps(data, indent=2)
+        else:
+            return json.dumps(data)
+
+    def parse(self, content: str) -> Dict[str, HostScanData]:
+        """Parse JSON content back into HostScanData objects"""
+        try:
+            data = json.loads(content)
+            result = {}
+
+            for host_entry in data.get("hosts", []):
+                ip = host_entry.get("ip")
+                if not ip or not HostScanData.is_valid_ip(ip):
+                    logging.warning(f"Invalid IP in JSON data: {ip}")
+                    continue
+
+                host = HostScanData(ip)
+                host.set_hostname(host_entry.get("hostname", ""))
+
+                # Handle MAC address
+                if host_entry.get("mac_address"):
+                    host.set_mac_address(host_entry.get("mac_address"))
+
+                # Handle MAC sources if present
+                if host_entry.get("mac_sources") and hasattr(host, "mac_sources"):
+                    host.mac_sources = host_entry.get("mac_sources")
+
+                # Process ports
+                for port_entry in host_entry.get("ports", []):
+                    try:
+                        # Create port details
+                        port_details = PortDetails(
+                            port_entry.get("port", ""),
+                            port_entry.get("protocol", "tcp"),
+                            port_entry.get("state", "TBD"),
+                            port_entry.get("service", "unknown?"),
+                            port_entry.get("comment", ""),
+                        )
+
+                        # Add sources if present and supported
+                        if port_entry.get("sources") and hasattr(
+                            port_details, "sources"
+                        ):
+                            port_details.sources = port_entry.get("sources")
+
+                        host.add_port_details(port_details)
+                    except ValueError as e:
+                        logging.warning(f"Error adding port: {e}")
+
+                result[ip] = host
+
+            return result
+
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON data: {e}")
+            return {}
+        except Exception as e:
+            logging.error(f"Error importing JSON data: {e}")
+            return {}
+
+
+class MacAddressReport(Convert):
+    """Generates a report focusing on MAC addresses for network inventory."""
+
+    def __init__(
+        self,
+        global_state: Dict[str, HostScanData] = None,
+        show_origin: bool = False,
+        include_up_hosts: bool = True,
+        hostup_dict: Dict[str, str] = None,
+    ):
+        super().__init__(global_state)
+        self.show_origin = show_origin
+        self.include_up_hosts = include_up_hosts
+        self.hostup_dict = hostup_dict or {}
+
+    def convert(self) -> str:
+        # Try to import vendor lookup functionality
+        vendor_lookup = None
+        try:
+            from unitas.utils import mac_vendor_lookup
+
+            vendor_lookup = mac_vendor_lookup
+        except ImportError:
+            pass
+
+        # Markdown header parts
+        header_parts = ["IP", "MAC Address", "Hostname", "Vendor", "Open Ports"]
+        if self.show_origin:
+            header_parts.append("Source")
+
+        # Markdown header
+        output = ["|" + "|".join(header_parts) + "|"]
+        output.append("|" + "|".join(["--"] * len(header_parts)) + "|")
+
+        # Markdown data
+        for host in self.global_state.values():
+            # Only include hosts with MAC addresses
+            if not host.mac_address:
+                continue
+
+            # Get MAC vendor if available
+            vendor = "-"
+            if vendor_lookup:
+                vendor = vendor_lookup.lookup(host.mac_address) or "-"
+
+            # Format source info if available
+            source_info = "-"
+            if self.show_origin and hasattr(host, "mac_sources") and host.mac_sources:
+                source_parts = []
+                for source in host.mac_sources:
+                    if source["type"] or source["file"]:
+                        source_parts.append(f"{source['type']}:{source['file']}")
+                if source_parts:
+                    source_info = ", ".join(source_parts)
+
+            # Count open ports
+            port_count = len(host.ports)
+
+            # Build row parts
+            row_parts = [
+                host.ip,
+                host.mac_address,
+                host.hostname or "-",
+                vendor,
+                str(port_count),
+            ]
+
+            if self.show_origin:
+                row_parts.append(source_info)
+
+            # Add the host data
+            output.append("|" + "|".join(row_parts) + "|")
+
+            # Add hosts from hostup_dict if they're not already included
+            if self.include_up_hosts:
+                for ip, reason in self.hostup_dict.items():
+                    # Skip if this IP is already in the global state
+                    if ip in self.global_state:
+                        continue
+
+                    # Row with minimal information
+                    row_parts = [ip, "-", "-", "-", "0"]
+                    if self.show_origin:
+                        row_parts.append(f"hostup:{reason}")
+
+                    output.append("|" + "|".join(row_parts) + "|")
+
+            return "\n".join(output) + "\n"
+
+    def _csv_escape(self, text):
+        """Escape a string for CSV output"""
+        if not text:
+            return ""
+        return text
+
+    def parse(self, content: str) -> Dict[str, HostScanData]:
+        """
+        Not implemented for this report type, as it's designed for output only.
+        """
+        raise NotImplementedError("Parsing MAC address reports is not supported")
 
 
 def load_markdown_state(filename: str) -> Dict[str, HostScanData]:
