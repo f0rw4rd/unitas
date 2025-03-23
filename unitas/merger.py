@@ -3,6 +3,7 @@ from copy import deepcopy
 import glob
 import logging
 import os
+import shutil
 from typing import Dict, List
 from xml.etree.ElementTree import ParseError
 import xml.etree.ElementTree as ET
@@ -13,7 +14,7 @@ from .exporter import NessusExporter
 
 class ScanMerger(ABC):
     def __init__(self, directory: str, output_directory: str):
-        self.directry = directory
+        self.directory = directory
         self.output_directory = output_directory
         self.output_file: str = None
         self.filter: str = None
