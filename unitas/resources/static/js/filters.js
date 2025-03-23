@@ -103,7 +103,11 @@ function applyFilters() {
     }
 
     // Apply filters by refreshing the graph
-    refreshGraph();
+    try {
+        refreshGraph();
+    } catch (error) {
+        console.error("Error applying filters:", error);
+    }
 }
 
 function resetFilters() {
@@ -138,28 +142,45 @@ function refreshGraph() {
     edgesDataset = null;
 
     renderGraph();
-    
-    if (document.getElementById('highlight-tls').checked) {
+
+    if (nodesDataset && document.getElementById('highlight-tls').checked) {
         highlightTlsServices();
     }
 }
 
+
 function highlightTlsServices() {
+    // Check if nodesDataset exists before trying to use it
+    if (!nodesDataset) {
+        console.log("Cannot highlight TLS services: nodesDataset is not initialized");
+        return;
+    }
+
     const highlight = document.getElementById('highlight-tls').checked;
 
-    nodesDataset.get({
-        filter: node => node.type === "service" && node.tls
-    }).forEach(node => {
-        nodesDataset.update({
-            id: node.id,
-            color: highlight ? {
-                border: "#e74c3c",
-                background: "#e74c3c",
-                highlight: {
-                    border: "#c0392b",
-                    background: "#e74c3c"
-                }
-            } : null
+    try {
+        // Get all service nodes that have TLS
+        const tlsNodes = nodesDataset.get({
+            filter: node => node.type === "service" && node.tls
         });
-    });
+
+        // Update each node with appropriate color
+        if (tlsNodes && tlsNodes.length > 0) {
+            tlsNodes.forEach(node => {
+                nodesDataset.update({
+                    id: node.id,
+                    color: highlight ? {
+                        border: "#e74c3c",
+                        background: "#e74c3c",
+                        highlight: {
+                            border: "#c0392b",
+                            background: "#e74c3c"
+                        }
+                    } : null
+                });
+            });
+        }
+    } catch (error) {
+        console.error("Error highlighting TLS services:", error);
+    }
 }

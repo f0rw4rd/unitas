@@ -67,42 +67,6 @@ def start_http_server(json_content, port=8000):
         with open(os.path.join(temp_dir, "data.json"), "w", encoding="utf-8") as f:
             f.write(json_content)
 
-        # Create a minimal JavaScript file to auto-load the data
-        auto_loader_js = """
-        document.addEventListener('DOMContentLoaded', function() {
-            // Auto-load the JSON data
-            fetch('data.json')
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    // Store data globally
-                    window.scanData = data;
-                    
-                    // Call validation function from dataHandlers.js
-                    validateAndDisplayData(data);
-                })
-                .catch(error => {
-                    console.error('Error loading data:', error);
-                    const errorMsg = document.getElementById('error-message');
-                    if (errorMsg) {
-                        errorMsg.textContent = "Error loading data automatically. Please try uploading manually.";
-                        errorMsg.classList.remove('hidden');
-                    }
-                });
-        });
-        """
-
-        with open(
-            os.path.join(temp_dir, "static", "js", "auto-loader.js"),
-            "w",
-            encoding="utf-8",
-        ) as f:
-            f.write(auto_loader_js)
-
         # Modify the index.html to include the auto-loader script
         with open(os.path.join(temp_dir, "index.html"), "r", encoding="utf-8") as f:
             html_content = f.read()
@@ -125,6 +89,12 @@ def start_http_server(json_content, port=8000):
         class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             def end_headers(self):
                 self.send_header("Access-Control-Allow-Origin", "*")
+
+                # Add cache prevention headers for all responses
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+
                 super().end_headers()
 
         # Create a simple HTTP server
