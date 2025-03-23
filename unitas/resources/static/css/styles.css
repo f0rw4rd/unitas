@@ -741,3 +741,93 @@ footer {
     max-width: 300px;
     display: none;
 }
+
+/* MAC Address View specific styles */
+.mac-vendor-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.8em;
+    margin-left: 5px;
+    background-color: #3498db;
+    color: white;
+}
+
+.mac-table-container {
+    max-height: 700px;
+    overflow-y: auto;
+}
+
+/* Styling for MAC addresses */
+.mac-cell {
+    font-family: monospace;
+    letter-spacing: 0.5px;
+}
+
+/* Vendor grouping in MAC table */
+.vendor-group {
+    background-color: #f8f9fa;
+    font-weight: bold;
+}
+
+.vendor-group td {
+    padding: 10px;
+    border-top: 2px solid #ddd;
+}
+
+/* MAC address report styling */
+.mac-report-container {
+    margin: 20px;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.mac-report-header {
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.mac-report-summary {
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+
+/* Mac address analysis section */
+#mac-analysis-result {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border: 1px solid #eee;
+    border-radius: 5px;
+}
+
+.vendor-distribution {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.vendor-item {
+    background-color: #e8f4fc;
+    border: 1px solid #c5e1f9;
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-size: 0.9em;
+}
+
+/* Responsive MAC table for smaller screens */
+@media (max-width: 768px) {
+
+    #mac-table th:nth-child(2),
+    #mac-table td:nth-child(2),
+    #mac-table th:nth-child(5),
+    #mac-table td:nth-child(5) {
+        display: none;
+    }
+}

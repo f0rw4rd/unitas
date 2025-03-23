@@ -1,6 +1,6 @@
 // Table rendering functions
 function populateTables() {
-    if (!window.scanData) return;
+    if (!scanData) return;
 
     populateHostsTable();
     populatePortsTable();
@@ -12,12 +12,12 @@ function populateHostsTable() {
     const hostsTable = document.querySelector('#hosts-table tbody');
     hostsTable.innerHTML = '';
 
-    if (window.scanData.hosts.length === 0) {
-        renderEmptyTableMessage(hostsTable, 3, 'No hosts with open ports found.');
+    if (scanData.hosts.length === 0) {
+        renderEmptyTableMessage(hostsTable, 5, 'No hosts with open ports found.');
         return;
     }
 
-    window.scanData.hosts.sort((a, b) => {
+    scanData.hosts.sort((a, b) => {
         // Sort by IP address
         const ipA = a.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
         const ipB = b.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
@@ -32,6 +32,16 @@ function populateHostsTable() {
         const hostnameCell = document.createElement('td');
         hostnameCell.textContent = host.hostname || '-';
         row.appendChild(hostnameCell);
+
+        // Add MAC address cell
+        const macCell = document.createElement('td');
+        macCell.textContent = host.mac_address || '-';
+        row.appendChild(macCell);
+
+        // Add vendor cell
+        const vendorCell = document.createElement('td');
+        vendorCell.textContent = host.vendor || '-';
+        row.appendChild(vendorCell);
 
         const portsCell = document.createElement('td');
         const portsList = document.createElement('ul');
@@ -64,14 +74,14 @@ function populatePortsTable() {
     const portsTable = document.querySelector('#ports-table tbody');
     portsTable.innerHTML = '';
 
-    if (window.scanData.hosts.length === 0 || !window.scanData.hosts.some(host => host.ports.length > 0)) {
+    if (scanData.hosts.length === 0 || !scanData.hosts.some(host => host.ports.length > 0)) {
         renderEmptyTableMessage(portsTable, 7, 'No open ports found.');
         return;
     }
 
     const allPorts = [];
 
-    window.scanData.hosts.forEach(host => {
+    scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             allPorts.push({
                 ip: host.ip,
@@ -135,7 +145,7 @@ function populateServicesTable() {
     const servicesTable = document.querySelector('#services-table tbody');
     servicesTable.innerHTML = '';
 
-    if (window.scanData.hosts.length === 0 || !window.scanData.hosts.some(host => host.ports.length > 0)) {
+    if (scanData.hosts.length === 0 || !scanData.hosts.some(host => host.ports.length > 0)) {
         renderEmptyTableMessage(servicesTable, 3, 'No services found.');
         return;
     }
@@ -143,7 +153,7 @@ function populateServicesTable() {
     // Group by service
     const serviceGroups = {};
 
-    window.scanData.hosts.forEach(host => {
+    scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             const cleanService = port.service.replace('?', '');
             if (!serviceGroups[cleanService]) {
@@ -182,12 +192,12 @@ function populateUpHostsTable() {
     const upHostsTable = document.querySelector('#up-hosts-table tbody');
     upHostsTable.innerHTML = '';
 
-    if (!window.scanData.hostsUp || window.scanData.hostsUp.length === 0) {
+    if (!scanData.hostsUp || scanData.hostsUp.length === 0) {
         renderEmptyTableMessage(upHostsTable, 2, 'No hosts that are up without open ports.');
         return;
     }
 
-    window.scanData.hostsUp.sort((a, b) => {
+    scanData.hostsUp.sort((a, b) => {
         const ipA = a.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
         const ipB = b.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
         return ipA.localeCompare(ipB);
