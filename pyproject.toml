@@ -32,4 +32,4 @@ packages = ["unitas", "unitas.resources"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"unitas.resources" = ["*.html"]
+"unitas.resources" = ["*.html", "static/css/*.css", "static/js/*.js"]

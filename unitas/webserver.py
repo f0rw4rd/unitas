@@ -14,26 +14,54 @@ def start_http_server(json_content, port=8000):
     # Create a temporary directory to serve files from
     temp_dir = tempfile.mkdtemp()
     try:
-        # Find the HTML file
-        html_file = None
-        # Try to find the packaged HTML file
+        # Find the resources directory
+        resources_dir = None
+        # Try to find the packaged resources directory
         try:
             import pkg_resources
 
-            html_file = pkg_resources.resource_filename("unitas.resources", "view.html")
+            resources_dir = pkg_resources.resource_filename("unitas", "resources")
         except (ImportError, pkg_resources.DistributionNotFound):
             # Fall back to looking in the script directory
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            potential_html = os.path.join(script_dir, "resources", "view.html")
-            if os.path.exists(potential_html):
-                html_file = potential_html
+            potential_resources = os.path.join(script_dir, "resources")
+            if os.path.exists(potential_resources):
+                resources_dir = potential_resources
 
-        if not html_file or not os.path.exists(html_file):
-            logging.error("Could not find the HTML viewer file (view.html)")
+        if not resources_dir or not os.path.exists(resources_dir):
+            logging.error("Could not find the resources directory")
             return False
 
-        # Copy the HTML file to the temp directory
-        shutil.copy(html_file, os.path.join(temp_dir, "index.html"))
+        # Create directory structure in temp dir
+        os.makedirs(os.path.join(temp_dir, "static", "css"), exist_ok=True)
+        os.makedirs(os.path.join(temp_dir, "static", "js"), exist_ok=True)
+
+        # Copy index.html
+        index_html_path = os.path.join(resources_dir, "index.html")
+        if not os.path.exists(index_html_path):
+            logging.error(f"Could not find index.html at {index_html_path}")
+            return False
+        shutil.copy(index_html_path, os.path.join(temp_dir, "index.html"))
+
+        # Copy CSS files
+        css_dir = os.path.join(resources_dir, "static", "css")
+        if os.path.exists(css_dir):
+            for file in os.listdir(css_dir):
+                if file.endswith(".css"):
+                    shutil.copy(
+                        os.path.join(css_dir, file),
+                        os.path.join(temp_dir, "static", "css", file),
+                    )
+
+        # Copy JS files
+        js_dir = os.path.join(resources_dir, "static", "js")
+        if os.path.exists(js_dir):
+            for file in os.listdir(js_dir):
+                if file.endswith(".js"):
+                    shutil.copy(
+                        os.path.join(js_dir, file),
+                        os.path.join(temp_dir, "static", "js", file),
+                    )
 
         # Write the JSON data to the temp directory
         with open(os.path.join(temp_dir, "data.json"), "w", encoding="utf-8") as f:
@@ -51,16 +79,10 @@ def start_http_server(json_content, port=8000):
                     return response.json();
                 })
                 .then(data => {
-                    // Access the internal handleFile function
-                    // Simulate file selection
-                    scanData = data;
+                    // Store data globally
+                    window.scanData = data;
                     
-                    // Hide the initial screen and show data view directly
-                    document.getElementById('initial-screen').classList.add('hidden');
-                    document.getElementById('data-view').classList.remove('hidden');
-                    document.getElementById('error-message').classList.add('hidden');
-                    
-                    // Call the validation and display functions
+                    // Call validation function from dataHandlers.js
                     validateAndDisplayData(data);
                 })
                 .catch(error => {
@@ -74,16 +96,20 @@ def start_http_server(json_content, port=8000):
         });
         """
 
-        with open(os.path.join(temp_dir, "auto-loader.js"), "w", encoding="utf-8") as f:
+        with open(
+            os.path.join(temp_dir, "static", "js", "auto-loader.js"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             f.write(auto_loader_js)
 
         # Modify the index.html to include the auto-loader script
         with open(os.path.join(temp_dir, "index.html"), "r", encoding="utf-8") as f:
             html_content = f.read()
 
-        # Add the auto-loader script right before the closing </head> tag
+        # Add the auto-loader script right before the closing </body> tag
         html_content = html_content.replace(
-            "</head>", '<script src="auto-loader.js"></script></head>'
+            "</body>", '<script src="static/js/auto-loader.js"></script></body>'
         )
 
         with open(os.path.join(temp_dir, "index.html"), "w", encoding="utf-8") as f:

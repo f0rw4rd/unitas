@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unitas Network Scan Viewer</title>
+    <link rel="stylesheet" href="static/css/styles.css">
+    <!-- External Libraries -->
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="https://unpkg.com/vis-data/standalone/umd/vis-data.min.js"></script>
+</head>
+
+<body>
+    <header>
+        <h1>Unitas Network Scan Viewer</h1>
+    </header>
+    <div class="container">
+        <!-- Initial screen for loading data -->
+        <div id="initial-screen" class="initial-screen">
+            <h2>Load Unitas JSON Scan Data</h2>
+            <div id="drop-area" class="drop-area">
+                <p>Drag and drop a Unitas JSON file here</p>
+                <p>OR</p>
+                <div class="file-input-wrapper">
+                    <button class="file-input-button">Select JSON File</button>
+                    <input type="file" id="file-input" class="file-input" accept=".json">
+                </div>
+            </div>
+            <p id="error-message" class="error-message hidden"></p>
+            <p>Generate JSON files with: <code>unitas /path/to/scan/folder --json -o output.json</code></p>
+        </div>
+
+        <!-- Data view (initially hidden) -->
+        <div id="data-view" class="hidden">
+            <div class="scan-info">
+                <span id="scan-date">Generated: [Date]</span>
+                <span id="scan-version">Unitas [Version]</span>
+            </div>
+
+            <div class="data-controls">
+                <button id="reload-btn" class="reload-btn">Load Different File</button>
+                <button id="export-markdown-btn" class="export-btn">Export as Markdown</button>
+            </div>
+
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-number" id="total-hosts">0</div>
+                    <div class="stat-label">Total Hosts</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number" id="total-ports">0</div>
+                    <div class="stat-label">Open Ports</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number" id="up-hosts">0</div>
+                    <div class="stat-label">Hosts Up (No Ports)</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number" id="services-count">0</div>
+                    <div class="stat-label">Unique Services</div>
+                </div>
+            </div>
+
+            <div class="search-container">
+                <input type="text" id="search" placeholder="Search for hosts, ports, services...">
+            </div>
+
+            <div class="nav">
+                <div class="nav-item active" data-view="hosts-view">Hosts</div>
+                <div class="nav-item" data-view="ports-view">Ports</div>
+                <div class="nav-item" data-view="services-view">Services</div>
+                <div class="nav-item" data-view="up-hosts-view">Up Hosts</div>
+                <div class="nav-item" data-view="graph-view">Network Graph</div>
+            </div>
+
+            <div id="hosts-view" class="view active">
+                <div class="panel">
+                    <h2>Hosts with Open Ports</h2>
+                    <div class="table-container">
+                        <table id="hosts-table">
+                            <thead>
+                                <tr>
+                                    <th>IP</th>
+                                    <th>Hostname</th>
+                                    <th>Open Ports</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="ports-view" class="view">
+                <div class="panel">
+                    <h2>Open Ports</h2>
+                    <div class="status-filter">
+                        <button class="status-btn active" data-status="all">All</button>
+                        <button class="status-btn" data-status="tbd">TBD</button>
+                        <button class="status-btn" data-status="done">Done</button>
+                    </div>
+                    <div class="table-container">
+                        <table id="ports-table">
+                            <thead>
+                                <tr>
+                                    <th>IP</th>
+                                    <th>Hostname</th>
+                                    <th>Port</th>
+                                    <th>Protocol</th>
+                                    <th>Service</th>
+                                    <th>Status</th>
+                                    <th>Comment</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="services-view" class="view">
+                <div class="panel">
+                    <h2>Services</h2>
+                    <div class="table-container">
+                        <table id="services-table">
+                            <thead>
+                                <tr>
+                                    <th>Service</th>
+                                    <th>Count</th>
+                                    <th>Hosts</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="up-hosts-view" class="view">
+                <div class="panel">
+                    <h2>Up Hosts (No Open Ports)</h2>
+                    <div class="table-container">
+                        <table id="up-hosts-table">
+                            <thead>
+                                <tr>
+                                    <th>IP</th>
+                                    <th>Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="graph-view" class="view">
+                <div class="panel">
+                    <h2>Enhanced Network Visualization</h2>
+                    <div class="graph-flex-container">
+                        <div id="graph-sidebar">
+                            <div class="filter-section">
+                                <h3>Filters</h3>
+                                <div class="tag-filter">
+                                    <label for="service-filter">Service Type:</label>
+                                    <select id="service-filter" class="filter-select">
+                                        <option value="all">All Services</option>
+                                    </select>
+                                </div>
+                                <div class="range-filter">
+                                    <label>Port Range:</label>
+                                    <div class="range-inputs">
+                                        <input type="number" id="port-min" min="1" max="65535" value="1">
+                                        <span>to</span>
+                                        <input type="number" id="port-max" min="1" max="65535" value="65535">
+                                    </div>
+                                </div>
+                                <div class="subnet-filter">
+                                    <label for="subnet-filter">Filter by Subnet:</label>
+                                    <input id="subnet-filter" placeholder="e.g., 192.168.1">
+                                </div>
+                                <div class="filter-section">
+                                    <h3>Display Options</h3>
+                                    <ul class="checkbox-list">
+                                        <li>
+                                            <label>
+                                                <input type="checkbox" id="show-up-hosts" checked> Show hosts without
+                                                open ports
+                                            </label>
+                                        </li>
+                                        <li>
+                                            <label>
+                                                <input type="checkbox" id="show-uncertain" checked> Show uncertain
+                                                services
+                                            </label>
+                                        </li>
+                                        <li>
+                                            <label>
+                                                <input type="checkbox" id="highlight-tls" checked> Highlight TLS
+                                                services
+                                            </label>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <div class="filter-section">
+                                    <h3>Layout</h3>
+                                    <ul class="radio-list">
+                                        <li>
+                                            <label>
+                                                <input type="radio" name="layout" value="standard" checked>
+                                                Force-directed
+                                            </label>
+                                        </li>
+                                        <li>
+                                            <label>
+                                                <input type="radio" name="layout" value="hierarchical"> Hierarchical
+                                            </label>
+                                        </li>
+                                        <li>
+                                            <label>
+                                                <input type="radio" name="layout" value="circular"> Circular
+                                            </label>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <div class="slider-container">
+                                    <label for="node-size">Node Size:</label>
+                                    <input type="range" min="1" max="30" value="16" class="slider" id="node-size">
+                                </div>
+                                <div class="filter-actions">
+                                    <button id="apply-filters" class="filter-button">Apply Filters</button>
+                                    <button id="reset-filters" class="reset-button">Reset</button>
+                                </div>
+                            </div>
+                            <div class="filter-section">
+                                <h3>Analysis Tools</h3>
+                                <div class="tag-filter">
+                                    <label for="analysis-type">Analysis:</label>
+                                    <select id="analysis-type" class="filter-select">
+                                        <option value="none">Select analysis...</option>
+                                        <option value="common-services">Find common services</option>
+                                        <option value="segments">Identify network segments</option>
+                                        <option value="unusual">Highlight unusual ports</option>
+                                        <option value="connectivity">Most connected hosts</option>
+                                    </select>
+                                </div>
+                                <button id="run-analysis" class="filter-button">Run Analysis</button>
+                                <div id="analysis-result" class="analysis-result hidden">
+                                    <h3>Analysis Results</h3>
+                                    <div id="analysis-content"></div>
+                                </div>
+                            </div>
+                            <div id="node-details" class="node-details">
+                                <h3>Node Details</h3>
+                                <div id="node-details-content" class="node-details-content"></div>
+                                <div class="node-actions">
+                                    <button id="pin-node" class="pin-button">Pin Node</button>
+                                    <button id="focus-node" class="filter-button">Focus</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="graph-area">
+                            <div id="graph-container"></div>
+                            <div class="graph-options">
+                                <button id="export-png" class="graph-option-btn">Export PNG</button>
+                                <button id="save-view" class="graph-option-btn">Save View</button>
+                                <button id="fit-graph" class="graph-option-btn">Fit View</button>
+                                <button id="toggle-minimap" class="graph-option-btn">Toggle Minimap</button>
+                                <button id="toggle-physics" class="graph-option-btn">Toggle Physics</button>
+                            </div>
+                            <div id="graph-minimap" class="graph-minimap"></div>
+                            <div id="graph-legend" class="graph-legend">
+                                <div class="legend-item">
+                                    <div class="legend-color" style="background-color:#3498db;"></div>
+                                    <span>Host</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-color" style="background-color:#2ecc71;"></div>
+                                    <span>Service</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-color" style="background-color:#e67e22;"></div>
+                                    <span>Host (no open ports)</span>
+                                </div>
+                                <div class="legend-item">
+                                    <div class="legend-color" style="background-color:#9b59b6;"></div>
+                                    <span>Pinned Node</span>
+                                </div>
+                            </div>
+                            <div id="graph-tooltip" class="tooltip-container"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <footer>
+        Unitas Network Graph Viewer - Enhanced Visualization Tool
+    </footer>
+
+    <!-- Application Scripts -->
+    <script src="static/js/dataHandlers.js"></script>
+    <script src="static/js/tableRenderers.js"></script>
+    <script src="static/js/networkGraph.js"></script>
+    <script src="static/js/filters.js"></script>
+    <script src="static/js/analysis.js"></script>
+    <script src="static/js/app.js"></script>
+</body>
+
+</html>
