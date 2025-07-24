@@ -88,7 +88,8 @@ def start_http_server(json_content, port=8000):
         # Create a custom HTTP handler to add CORS headers
         class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             def end_headers(self):
-                self.send_header("Access-Control-Allow-Origin", "*")
+                # Restrict CORS to localhost origins only for security
+                self.send_header("Access-Control-Allow-Origin", f"http://localhost:{port}")
 
                 # Add cache prevention headers for all responses
                 self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")

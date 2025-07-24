@@ -40,7 +40,10 @@
 
             <div class="data-controls">
                 <button id="reload-btn" class="reload-btn">Load Different File</button>
-                <button id="export-markdown-btn" class="export-btn">Export as Markdown</button>
+                <div class="export-controls">
+                    <button id="export-markdown-btn" class="export-btn">Export as Markdown</button>
+                    <button id="export-csv-btn" class="export-btn csv-btn">Export Current View as CSV</button>
+                </div>
             </div>
 
             <div class="stats">
@@ -63,7 +66,18 @@
             </div>
 
             <div class="search-container">
-                <input type="text" id="search" placeholder="Search for hosts, ports, services...">
+                <input type="text" id="search" placeholder="Search for hosts, ports, services... (Press / or Ctrl+F)">
+                <div class="keyboard-shortcuts-hint">
+                    <span class="shortcuts-toggle" id="shortcuts-toggle">⌨️ Shortcuts</span>
+                    <div class="shortcuts-panel hidden" id="shortcuts-panel">
+                        <div class="shortcuts-header">Keyboard Shortcuts</div>
+                        <div class="shortcut-item"><kbd>/</kbd> or <kbd>Ctrl+F</kbd> - Focus search</div>
+                        <div class="shortcut-item"><kbd>Esc</kbd> - Clear search</div>
+                        <div class="shortcut-item"><kbd>1-5</kbd> - Switch views</div>
+                        <div class="shortcut-item"><kbd>Ctrl+R</kbd> - Reload data</div>
+                        <div class="shortcut-item"><kbd>Ctrl+E</kbd> - Export markdown</div>
+                    </div>
+                </div>
             </div>
 
             <div class="nav">
@@ -81,11 +95,11 @@
                         <table id="hosts-table">
                             <thead>
                                 <tr>
-                                    <th>IP</th>
-                                    <th>Hostname</th>
-                                    <th>MAC Address</th>
-                                    <th>Vendor</th>
-                                    <th>Open Ports</th>
+                                    <th class="sortable" data-sort="ip">IP <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="hostname">Hostname <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="mac">MAC Address <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="vendor">Vendor <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="ports">Open Ports <span class="sort-indicator"></span></th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -106,13 +120,13 @@
                         <table id="ports-table">
                             <thead>
                                 <tr>
-                                    <th>IP</th>
-                                    <th>Hostname</th>
-                                    <th>Port</th>
-                                    <th>Protocol</th>
-                                    <th>Service</th>
-                                    <th>Status</th>
-                                    <th>Comment</th>
+                                    <th class="sortable" data-sort="ip">IP <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="hostname">Hostname <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="port">Port <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="protocol">Protocol <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="service">Service <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="status">Status <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="comment">Comment <span class="sort-indicator"></span></th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -128,9 +142,9 @@
                         <table id="services-table">
                             <thead>
                                 <tr>
-                                    <th>Service</th>
-                                    <th>Count</th>
-                                    <th>Hosts</th>
+                                    <th class="sortable" data-sort="service">Service <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="count">Count <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="hosts">Hosts <span class="sort-indicator"></span></th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
