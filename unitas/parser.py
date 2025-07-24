@@ -201,23 +201,6 @@ class NessusParser(ScanParser):
             host.add_port_details(self._parse_service_item(item))
         return counter
 
-    def _parse_port_item(self, item: ET.Element) -> PortDetails:
-        if not all(attr in item.attrib for attr in ["port", "protocol", "svc_name"]):
-            logging.error(f"Failed to parse nessus port scan: {ET.tostring(item)}")
-            return None
-        port: str = item.attrib.get("port")
-        if port == "0":  # host scans return port zero, skip
-            return None
-        protocol: str = item.attrib.get("protocol")
-        service: str = item.attrib.get("svc_name")
-        if "?" not in service:  # append a ? for just port scans
-            service = service_lookup.get_service_name_for_port(port, protocol, service)
-            service += "?"
-        else:
-            service = PortDetails.get_service_name(service, port)
-        state: str = "TBD"
-        return PortDetails(port=port, service=service, state=state, protocol=protocol)
-
     def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> int:
         counter = 0
         for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
@@ -356,7 +339,7 @@ def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
 
 
 def parse_files_concurrently(
-    parsers: List[ScanParser], max_workers: int = 1
+    parsers: List[ScanParser], max_workers: Optional[int] = None
 ) -> Dict[str, HostScanData]:
     global_state: Dict[str, HostScanData] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:

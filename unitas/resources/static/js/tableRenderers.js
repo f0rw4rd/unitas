@@ -26,7 +26,27 @@ function populateHostsTable() {
         const row = document.createElement('tr');
 
         const ipCell = document.createElement('td');
-        ipCell.textContent = host.ip;
+        ipCell.className = 'ip-cell';
+        ipCell.title = `IP Address: ${host.ip}${host.mac_address ? '\nMAC: ' + host.mac_address : ''}${host.vendor ? '\nVendor: ' + host.vendor : ''}`;
+        
+        const ipContainer = document.createElement('div');
+        ipContainer.className = 'ip-container';
+        
+        const ipText = document.createElement('span');
+        ipText.textContent = host.ip;
+        ipContainer.appendChild(ipText);
+        
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn';
+        copyBtn.textContent = '📋';
+        copyBtn.title = 'Copy IP address';
+        copyBtn.onclick = (e) => {
+            e.stopPropagation();
+            copyToClipboard(host.ip, 'IP address copied!');
+        };
+        ipContainer.appendChild(copyBtn);
+        
+        ipCell.appendChild(ipContainer);
         row.appendChild(ipCell);
 
         const hostnameCell = document.createElement('td');
@@ -59,7 +79,17 @@ function populateHostsTable() {
                 portText += ' <span class="badge badge-tls">TLS</span>';
             }
 
+            // Create detailed tooltip
+            let tooltipText = `Port: ${port.port}/${port.protocol}\nService: ${port.service}`;
+            if (port.comment) tooltipText += `\nComment: ${port.comment}`;
+            if (port.state) tooltipText += `\nState: ${port.state}`;
+            if (port.sources && port.sources.length > 0) {
+                tooltipText += `\nDetected by: ${port.sources.map(s => s.type).join(', ')}`;
+            }
+
             portItem.innerHTML = portText;
+            portItem.title = tooltipText;
+            portItem.className = 'port-item';
             portsList.appendChild(portItem);
         });
 
@@ -102,7 +132,26 @@ function populatePortsTable() {
         const row = document.createElement('tr');
 
         const ipCell = document.createElement('td');
-        ipCell.textContent = port.ip;
+        ipCell.className = 'ip-cell';
+        
+        const ipContainer = document.createElement('div');
+        ipContainer.className = 'ip-container';
+        
+        const ipText = document.createElement('span');
+        ipText.textContent = port.ip;
+        ipContainer.appendChild(ipText);
+        
+        const copyIpBtn = document.createElement('button');
+        copyIpBtn.className = 'copy-btn';
+        copyIpBtn.textContent = '📋';
+        copyIpBtn.title = 'Copy IP address';
+        copyIpBtn.onclick = (e) => {
+            e.stopPropagation();
+            copyToClipboard(port.ip, 'IP address copied!');
+        };
+        ipContainer.appendChild(copyIpBtn);
+        
+        ipCell.appendChild(ipContainer);
         row.appendChild(ipCell);
 
         const hostnameCell = document.createElement('td');
@@ -110,7 +159,26 @@ function populatePortsTable() {
         row.appendChild(hostnameCell);
 
         const portCell = document.createElement('td');
-        portCell.textContent = port.port;
+        portCell.className = 'port-cell';
+        
+        const portContainer = document.createElement('div');
+        portContainer.className = 'port-container';
+        
+        const portText = document.createElement('span');
+        portText.textContent = port.port;
+        portContainer.appendChild(portText);
+        
+        const copyPortBtn = document.createElement('button');
+        copyPortBtn.className = 'copy-btn';
+        copyPortBtn.textContent = '📋';
+        copyPortBtn.title = 'Copy port number';
+        copyPortBtn.onclick = (e) => {
+            e.stopPropagation();
+            copyToClipboard(port.port, 'Port number copied!');
+        };
+        portContainer.appendChild(copyPortBtn);
+        
+        portCell.appendChild(portContainer);
         row.appendChild(portCell);
 
         const protocolCell = document.createElement('td');
