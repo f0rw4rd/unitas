@@ -212,6 +212,12 @@ Unitas uses a configuration file (`~/.unitas`) to store Nessus API credentials. 
 
 Contributions are welcome! If you find a bug or have a feature request, please open an issue on the GitHub repository. If you'd like to contribute code, please fork the repository and submit a pull request.
 
+## Support
+
+If you find this project useful, consider supporting development:
+
+[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/f0rw4rd)
+
 ## License
 
 This project is licensed under the [GPL-3.0 License](LICENSE).
