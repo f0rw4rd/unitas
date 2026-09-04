@@ -36,12 +36,7 @@ function populateHostsTable() {
         return;
     }
 
-    scanData.hosts.sort((a, b) => {
-        // Sort by IP address
-        const ipA = a.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
-        const ipB = b.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
-        return ipA.localeCompare(ipB);
-    }).forEach(host => {
+    scanData.hosts.slice().sort((a, b) => compareIps(a.ip, b.ip)).forEach(host => {
         const row = document.createElement('tr');
 
         const ipCell = document.createElement('td');
@@ -135,11 +130,8 @@ function populatePortsTable() {
     });
 
     allPorts.sort((a, b) => {
-        // Sort by IP, then port number
-        const ipA = a.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
-        const ipB = b.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
-
-        if (ipA !== ipB) return ipA.localeCompare(ipB);
+        const byIp = compareIps(a.ip, b.ip);
+        if (byIp !== 0) return byIp;
         return parseInt(a.port) - parseInt(b.port);
     }).forEach(port => {
         const row = document.createElement('tr');
@@ -194,20 +186,95 @@ function populatePortsTable() {
         }
         row.appendChild(serviceCell);
 
-        const stateCell = document.createElement('td');
-        stateCell.textContent = port.state || 'TBD';
-        row.appendChild(stateCell);
+        // Status and comment are editable; the filters, the sort and the
+        // exports read the row dataset, not these controls.
+        row.dataset.ip = port.ip;
+        row.dataset.port = port.port;
+        row.dataset.protocol = port.protocol;
+        row.dataset.service = port.service;
+        row.dataset.state = effectiveState(port.ip, port);
+        row.dataset.comment = effectiveComment(port.ip, port);
+        row.dataset.tls = (port.tls || (port.comment || '').includes('TLS')) ? '1' : '';
 
-        const commentCell = document.createElement('td');
-        if (port.comment && port.comment.includes('TLS') || port.tls) {
-            commentCell.innerHTML = `${port.comment ? port.comment.replace('TLS', '') : ''} <span class="badge badge-tls">TLS</span>`;
-        } else {
-            commentCell.textContent = port.comment || '';
-        }
-        row.appendChild(commentCell);
+        row.appendChild(createStateCell(port));
+        row.appendChild(createCommentCell(port));
 
         portsTable.appendChild(row);
     });
+}
+
+const PORT_STATES = ['TBD', 'Done'];
+
+function createStateCell(port) {
+    const cell = document.createElement('td');
+    const select = document.createElement('select');
+    select.className = 'state-select';
+    select.setAttribute('aria-label', `Status of ${port.ip} port ${port.port}`);
+
+    const current = effectiveState(port.ip, port);
+    const options = PORT_STATES.includes(current) ? PORT_STATES : PORT_STATES.concat(current);
+
+    options.forEach(state => {
+        const option = document.createElement('option');
+        option.value = state;
+        option.textContent = state;
+        select.appendChild(option);
+    });
+    select.value = current;
+
+    select.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
+
+    select.addEventListener('change', () => {
+        setPortEdit(port.ip, port, { state: select.value });
+        const row = cell.closest('tr');
+        if (row) row.dataset.state = select.value;
+        select.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
+        applyUiFilters();
+    });
+
+    cell.appendChild(select);
+    return cell;
+}
+
+function createCommentCell(port) {
+    const cell = document.createElement('td');
+    cell.className = 'comment-cell';
+    const current = effectiveComment(port.ip, port);
+
+    // only badge TLS when the comment does not already say so
+    if (port.tls && !current.includes('TLS')) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-tls';
+        badge.textContent = 'TLS';
+        cell.appendChild(badge);
+    }
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'comment-input';
+    input.value = current;
+    input.placeholder = 'note';
+    input.setAttribute('aria-label', `Comment for ${port.ip} port ${port.port}`);
+    input.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
+
+    const commit = () => {
+        setPortEdit(port.ip, port, { comment: input.value });
+        const row = cell.closest('tr');
+        if (row) row.dataset.comment = input.value;
+        input.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
+        applyUiFilters();
+    };
+
+    input.addEventListener('change', commit);
+    input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            input.blur();
+        }
+    });
+
+    cell.appendChild(input);
+    return cell;
 }
 
 function populateServicesTable() {
@@ -295,40 +362,6 @@ function renderEmptyTableMessage(tableBody, colSpan, message) {
     tableBody.appendChild(row);
 }
 
-// Search functionality
-function filterTables(searchTerm) {
-    // Filter hosts table
-    filterTable('#hosts-table tbody tr', searchTerm);
-
-    // Filter ports table
-    filterTable('#ports-table tbody tr', searchTerm);
-
-    // Filter services table
-    filterTable('#services-table tbody tr', searchTerm);
-
-    // Filter up hosts table
-    filterTable('#up-hosts-table tbody tr', searchTerm);
-}
-
-function filterTable(selector, searchTerm) {
-    const rows = document.querySelectorAll(selector);
-    rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(searchTerm) ? '' : 'none';
-    });
-}
-
-// Filter buttons functionality
-function filterPortsTableByStatus(status) {
-    const rows = document.querySelectorAll('#ports-table tbody tr');
-
-    rows.forEach(row => {
-        if (status === 'all') {
-            row.style.display = '';
-        } else {
-            const rowStatus = row.querySelector('td:nth-child(6)').textContent.toLowerCase();
-            row.style.display = rowStatus === status ? '' : 'none';
-        }
-    });
-}
+// Search and status filtering live in ui.js, which applies both criteria in a
+// single pass (filterTables / filterPortsTableByStatus).
 

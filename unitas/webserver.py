@@ -8,28 +8,15 @@ import threading
 import time
 import webbrowser
 
+from unitas.report import find_resources_dir
+
 
 def start_http_server(json_content, port=8000):
     """Start an HTTP server to serve the HTML viewer and JSON data."""
     # Create a temporary directory to serve files from
     temp_dir = tempfile.mkdtemp()
     try:
-        # Find the resources directory
-        resources_dir = None
-        # Try to find the packaged resources directory
-        try:
-            from importlib.resources import files
-
-            resources_dir = str(files("unitas") / "resources")
-        except Exception as e:  # pylint: disable=broad-except
-            logging.debug(f"Could not resolve packaged resources: {e}")
-
-        if not resources_dir or not os.path.exists(resources_dir):
-            # Fall back to looking in the script directory
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            potential_resources = os.path.join(script_dir, "resources")
-            if os.path.exists(potential_resources):
-                resources_dir = potential_resources
+        resources_dir = find_resources_dir()
 
         if not resources_dir or not os.path.exists(resources_dir):
             logging.error("Could not find the resources directory")

@@ -73,6 +73,10 @@ function renderGraph() {
 
         setupNetworkEvents();
 
+        if (document.querySelector('input[name="layout"]:checked').value === "circular") {
+            placeNodesInCircle();
+        }
+
         try {
             initializeMinimap(nodes, edges);
         } catch (error) {
@@ -92,20 +96,35 @@ function createGraphData() {
     const nodeIdMap = {};
     const servicesMap = new Map();
 
+    // The sidebar filters are applied while the graph is built; anything else
+    // would be thrown away by the rebuild.
+    const filters = getGraphFilters();
+    const counts = { hosts: 0, totalHosts: 0, ports: 0, totalPorts: 0 };
+
     // Process hosts
     window.scanData.hosts.forEach((host) => {
+        counts.totalHosts += 1;
+        counts.totalPorts += host.ports.length;
+
+        if (!hostMatchesFilters(host, filters)) return;
+
+        const ports = host.ports.filter(port => portMatchesFilters(port, filters));
+        if (ports.length === 0) return;
+
         const hostId = nextId++;
         nodeIdMap[host.ip] = hostId;
+        counts.hosts += 1;
+        counts.ports += ports.length;
 
         // Calculate value based on number of ports
-        const portCount = host.ports.length;
+        const portCount = ports.length;
 
         nodes.push({
             id: hostId,
             label: host.hostname || host.ip,
             title: formatNodeTooltip(host),
             group: "host",
-            subnetGroup: getSubnetGroup(host.ip),
+            subnetGroup: getSubnet(host.ip),
             type: "host",
             ip: host.ip,
             hostname: host.hostname,
@@ -117,7 +136,7 @@ function createGraphData() {
         // Process services on this host
         const hostServices = {};
 
-        host.ports.forEach((port) => {
+        ports.forEach((port) => {
             const serviceName = port.service.replace("?", "");
 
             if (!hostServices[serviceName]) {
@@ -166,8 +185,13 @@ function createGraphData() {
     });
 
     // Add hosts that are up but have no open ports
-    if (window.scanData.hostsUp && document.getElementById("show-up-hosts").checked) {
+    if (window.scanData.hostsUp && filters.showUpHosts) {
         window.scanData.hostsUp.forEach((host) => {
+            if (filters.subnet && !host.ip.startsWith(filters.subnet)) return;
+            // an up host has no service or port to match against
+            if (filters.service !== "all" || filters.portMin > 1 || filters.portMax < 65535) {
+                return;
+            }
             nodes.push({
                 id: nextId++,
                 label: host.ip,
@@ -177,11 +201,12 @@ function createGraphData() {
                 ip: host.ip,
                 reason: host.reason,
                 value: 8,
-                subnetGroup: getSubnetGroup(host.ip)
+                subnetGroup: getSubnet(host.ip)
             });
         });
     }
 
+    updateFilterSummary(counts);
     return { nodes, edges };
 }
 
@@ -259,8 +284,10 @@ function getSelectedLayout() {
                 }
             };
         case "circular":
+            // positions are assigned in placeNodesInCircle() once the nodes
+            // exist, the layout engine itself has no circular mode
             return {
-                improvedLayout: true,
+                improvedLayout: false,
                 randomSeed: 42
             };
         default:
@@ -268,6 +295,34 @@ function getSelectedLayout() {
                 improvedLayout: true
             };
     }
+}
+
+// vis has no circular layout, so place the nodes on two rings by hand: hosts
+// outside, the shared service nodes inside, with physics off so they stay put.
+function placeNodesInCircle() {
+    if (!network || !nodesDataset) return;
+
+    const all = nodesDataset.get();
+    const hosts = all.filter(node => node.type !== "service");
+    const services = all.filter(node => node.type === "service");
+    const radius = Math.max(300, all.length * 12);
+
+    const place = (list, ringRadius) => {
+        list.forEach((node, index) => {
+            const angle = (2 * Math.PI * index) / Math.max(1, list.length);
+            network.moveNode(
+                node.id,
+                Math.cos(angle) * ringRadius,
+                Math.sin(angle) * ringRadius
+            );
+        });
+    };
+
+    network.setOptions({ physics: { enabled: false } });
+    physicsEnabled = false;
+    place(hosts, radius);
+    place(services, radius / 2.2);
+    network.fit();
 }
 
 function setupNetworkEvents() {
@@ -627,6 +682,10 @@ function initializeMinimap(nodes, edges) {
 function updateMinimap() {
     if (!minimapNetwork || !network) return;
 
+    // it is built inside a hidden container, so it has to be measured again
+    // the first time it is shown
+    minimapNetwork.redraw();
+
     const scale = network.getScale();
     const position = network.getViewPosition();
 
@@ -639,7 +698,10 @@ function updateMinimap() {
 
 // Export graph as PNG
 function exportNetworkImage() {
-    if (!network) return;
+    if (!network) {
+        showError('Render the graph before exporting it as PNG');
+        return;
+    }
 
     const canvas = network.canvas.frame.canvas;
     const link = document.createElement('a');
@@ -650,30 +712,127 @@ function exportNetworkImage() {
     document.body.removeChild(link);
 }
 
-// Save and restore views
+// Save and restore views. They are kept in localStorage, an earlier version
+// stored them in a variable nothing ever read.
+const SAVED_VIEWS_KEY = 'unitas:graphViews';
+
+function loadSavedViews() {
+    try {
+        savedViews = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY)) || {};
+    } catch (error) {
+        savedViews = {};
+    }
+    return savedViews;
+}
+
+function persistSavedViews() {
+    try {
+        localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(savedViews));
+    } catch (error) {
+        showError('Could not store the view: browser storage is unavailable');
+    }
+}
+
+function refreshSavedViewSelect() {
+    const select = document.getElementById('saved-view-select');
+    if (!select) return;
+
+    const names = Object.keys(savedViews).sort();
+    const previous = select.value;
+    select.innerHTML = '';
+
+    if (names.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No saved views';
+        select.appendChild(option);
+        return;
+    }
+
+    names.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+    });
+
+    if (names.includes(previous)) {
+        select.value = previous;
+    }
+}
+
 function saveCurrentView() {
-    if (!network) return;
+    if (!network) {
+        showError('Render the graph before saving a view');
+        return;
+    }
 
     const name = prompt("Enter a name for this view:");
+    if (!name) return;
 
-    if (name) {
-        savedViews[name] = {
-            position: network.getViewPosition(),
-            scale: network.getScale(),
-            pinnedNodes: Array.from(pinnedNodes),
-            filter: {
-                service: document.getElementById('service-filter').value,
-                portMin: document.getElementById('port-min').value,
-                portMax: document.getElementById('port-max').value,
-                subnet: document.getElementById('subnet-filter').value,
-                showUpHosts: document.getElementById('show-up-hosts').checked,
-                showUncertain: document.getElementById('show-uncertain').checked,
-                highlightTls: document.getElementById('highlight-tls').checked
-            }
-        };
+    savedViews[name] = {
+        position: network.getViewPosition(),
+        scale: network.getScale(),
+        pinnedNodes: Array.from(pinnedNodes),
+        filter: {
+            service: document.getElementById('service-filter').value,
+            portMin: document.getElementById('port-min').value,
+            portMax: document.getElementById('port-max').value,
+            subnet: document.getElementById('subnet-filter').value,
+            showUpHosts: document.getElementById('show-up-hosts').checked,
+            showUncertain: document.getElementById('show-uncertain').checked,
+            highlightTls: document.getElementById('highlight-tls').checked
+        }
+    };
 
-        alert(`View "${name}" saved successfully!`);
+    persistSavedViews();
+    refreshSavedViewSelect();
+    document.getElementById('saved-view-select').value = name;
+    showToast(`View "${name}" saved`);
+}
+
+function loadSelectedView() {
+    const select = document.getElementById('saved-view-select');
+    const view = select && savedViews[select.value];
+    if (!view) {
+        showError('No saved view selected');
+        return;
     }
+
+    const filter = view.filter || {};
+    if (filter.service !== undefined) document.getElementById('service-filter').value = filter.service;
+    if (filter.portMin !== undefined) document.getElementById('port-min').value = filter.portMin;
+    if (filter.portMax !== undefined) document.getElementById('port-max').value = filter.portMax;
+    if (filter.subnet !== undefined) document.getElementById('subnet-filter').value = filter.subnet;
+    if (filter.showUpHosts !== undefined) document.getElementById('show-up-hosts').checked = filter.showUpHosts;
+    if (filter.showUncertain !== undefined) document.getElementById('show-uncertain').checked = filter.showUncertain;
+    if (filter.highlightTls !== undefined) document.getElementById('highlight-tls').checked = filter.highlightTls;
+
+    refreshGraph();
+
+    if (network && view.position) {
+        network.moveTo({
+            position: view.position,
+            scale: view.scale || 1,
+            animation: false
+        });
+    }
+
+    showToast(`View "${select.value}" loaded`);
+}
+
+function deleteSelectedView() {
+    const select = document.getElementById('saved-view-select');
+    const name = select && select.value;
+    if (!name || !savedViews[name]) {
+        showError('No saved view selected');
+        return;
+    }
+
+    delete savedViews[name];
+    persistSavedViews();
+    refreshSavedViewSelect();
+    showToast(`View "${name}" deleted`);
 }
 
 // Toggle physics simulation
@@ -727,14 +886,18 @@ function focusNode() {
     }
 }
 
-// Toggle minimap visibility
+// Toggle minimap visibility. The minimap is hidden by default (see the
+// stylesheet), previously it started visible and the first click hid it.
 function toggleMinimap() {
     const minimap = document.getElementById("graph-minimap");
-    if (minimap.style.display === 'none') {
-        minimap.style.display = 'block';
+    const button = document.getElementById("toggle-minimap");
+    const visible = minimap.classList.toggle('visible');
+
+    if (button) {
+        button.setAttribute('aria-pressed', visible ? 'true' : 'false');
+    }
+    if (visible) {
         updateMinimap();
-    } else {
-        minimap.style.display = 'none';
     }
 }
 

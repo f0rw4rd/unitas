@@ -19,9 +19,9 @@
             } catch (e) { /* storage can be blocked, the media query still applies */ }
         })();
     </script>
-    <!-- External Libraries -->
-    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <script src="https://unpkg.com/vis-data/standalone/umd/vis-data.min.js"></script>
+    <!-- Vendored so the viewer also works on an isolated network. The
+         standalone bundle contains vis-data. -->
+    <script src="static/js/vis-network.min.js"></script>
 </head>
 
 <body>
@@ -61,8 +61,26 @@
             </div>
 
             <div class="data-controls">
-                <button id="reload-btn" class="reload-btn">Load Different File</button>
+                <div class="control-group">
+                    <button id="reload-btn" class="reload-btn">Load Different File</button>
+                    <span id="edit-count" class="edit-count"></span>
+                    <button id="reset-edits-btn" class="reload-btn" disabled>Reset Edits</button>
+                </div>
                 <div class="export-controls">
+                    <div class="menu" id="copy-menu">
+                        <button id="copy-menu-btn" class="export-btn csv-btn" type="button" aria-haspopup="true"
+                            aria-expanded="false">Copy Visible</button>
+                        <div class="menu-panel hidden" id="copy-menu-panel" role="menu">
+                            <button type="button" role="menuitem" data-copy="urls-web">Web URLs
+                                (http/https)</button>
+                            <button type="button" role="menuitem" data-copy="urls-all">URLs (service as
+                                scheme)</button>
+                            <button type="button" role="menuitem" data-copy="ip-port">IP:port</button>
+                            <button type="button" role="menuitem" data-copy="ips">IP addresses</button>
+                            <button type="button" role="menuitem" data-copy="nmap">nmap re-scan command</button>
+                        </div>
+                    </div>
+                    <button id="export-state-btn" class="export-btn">Export state.md</button>
                     <button id="export-markdown-btn" class="export-btn">Export as Markdown</button>
                     <button id="export-csv-btn" class="export-btn csv-btn">Export Current View as CSV</button>
                 </div>
@@ -279,6 +297,19 @@
                                     <button id="apply-filters" class="filter-button">Apply Filters</button>
                                     <button id="reset-filters" class="reset-button">Reset</button>
                                 </div>
+                                <p id="filter-summary" class="filter-summary"></p>
+                            </div>
+                            <div class="filter-section">
+                                <h3>Saved Views</h3>
+                                <div class="tag-filter">
+                                    <select id="saved-view-select" class="filter-select">
+                                        <option value="">No saved views</option>
+                                    </select>
+                                </div>
+                                <div class="filter-actions">
+                                    <button id="load-view" class="filter-button">Load</button>
+                                    <button id="delete-view" class="reset-button">Delete</button>
+                                </div>
                             </div>
                             <div class="filter-section">
                                 <h3>Analysis Tools</h3>
@@ -354,6 +385,8 @@
 
     <!-- Application Scripts -->
     <script src="static/js/ui.js"></script>
+    <script src="static/js/edits.js"></script>
+    <script src="static/js/targets.js"></script>
     <script src="static/js/dataHandlers.js"></script>
     <script src="static/js/tableRenderers.js"></script>
     <script src="static/js/networkGraph.js"></script>

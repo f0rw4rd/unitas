@@ -50,6 +50,7 @@ unitas /path/to/scan/folder [options]
 - `-o`, `--origin`: Show origin information (source scanner type, file, and date) for each port
 - `-M`, `--mac-report`: Generate a markdown report of MAC addresses for network inventory
 - `-H`, `--http-server`: Start an HTTP server with interactive visualization of scan results
+- `-R`, `--html-report [FILE]`: Write a single self-contained HTML report (default: `unitas_report.html`)
 - `--port`: Specify the port for the HTTP server (default: 8000)
 - `--report-title`: Specify a custom title for the merged Nessus report
 
@@ -105,6 +106,33 @@ You can specify a custom port if needed:
 ```
 unitas /path/to/scan/folder -H --port 9000
 ```
+
+### Single File Report
+
+To hand the results to someone else, or to archive them with the engagement, write the
+viewer and the scan data into one HTML file:
+
+```
+unitas /path/to/scan/folder -R
+```
+
+The file opens straight from the filesystem, needs no server and no network connection
+(the graph library ships with it), and contains every view of the web interface.
+
+### Triage in the Browser
+
+The Ports view is editable: the status column (TBD/Done) and the comment column can be
+changed while working through the hosts. The edits are stored per scan in the browser and
+"Export state.md" writes them out in the format `unitas -u` merges back in:
+
+```
+unitas /path/to/scan/folder -H       # triage, then Export state.md into the scan folder
+unitas /path/to/scan/folder -u       # merges state.md with the next scan run
+```
+
+"Copy Visible" copies whatever the current search and status filters leave on screen as
+web URLs, `service://host:port` URLs, `ip:port` pairs, bare IPs, or an nmap re-scan
+command -- the same rules the `-w/--urls` flag uses.
 
 ### Visualization Features
 

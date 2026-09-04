@@ -44,6 +44,27 @@ function updateThemeToggle() {
     button.setAttribute('aria-pressed', dark ? 'true' : 'false');
 }
 
+// Messages raised after the data is displayed used to be written into an
+// element inside the (now hidden) landing screen, so nobody ever saw them.
+function showToast(message, kind) {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast';
+        toast.className = 'copy-success';
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
+        document.body.appendChild(toast);
+    }
+
+    toast.textContent = message;
+    toast.classList.toggle('toast-error', kind === 'error');
+    toast.classList.remove('hidden');
+
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => toast.classList.add('hidden'), 4000);
+}
+
 function activeViewId() {
     const active = document.querySelector('.view.active');
     return active ? active.id : null;
@@ -53,13 +74,23 @@ function isEmptyMessageRow(row) {
     return row.querySelector('.empty-message') !== null;
 }
 
+// The searchable text of a row: its cells plus the values of the editable
+// controls, which contribute nothing to textContent.
+function rowSearchText(row) {
+    const values = Array.from(row.querySelectorAll('input, select'))
+        .map(control => control.value)
+        .join(' ');
+    return `${row.textContent} ${values}`.toLowerCase();
+}
+
 function rowMatchesFilters(row, tableSelector) {
-    if (uiFilterState.term && !row.textContent.toLowerCase().includes(uiFilterState.term)) {
+    if (uiFilterState.term && !rowSearchText(row).includes(uiFilterState.term)) {
         return false;
     }
     if (tableSelector === '#ports-table' && uiFilterState.status !== 'all') {
-        const statusCell = row.querySelector('td:nth-child(6)');
-        if (!statusCell || statusCell.textContent.trim().toLowerCase() !== uiFilterState.status) {
+        // the status lives in the dataset; the cell holds a <select>
+        const state = (row.dataset.state || '').toLowerCase();
+        if (state !== uiFilterState.status) {
             return false;
         }
     }
@@ -136,8 +167,8 @@ function updateResultCount() {
         : `${visible} of ${total} ${view.unit}`;
 }
 
-// vis-network is loaded from a CDN, which is exactly what an isolated
-// assessment network does not have. Say so in the view instead of leaving an
+// vis-network ships with the viewer, but the file can still be missing (a
+// partial copy, a stripped package). Say so in the view instead of leaving an
 // empty box and an error in the console.
 function updateGraphAvailability() {
     const fallback = document.getElementById('graph-fallback');
@@ -163,11 +194,10 @@ function updateGraphAvailability() {
         title.textContent = 'Network graph unavailable';
         const text = document.createElement('p');
         text.textContent =
-            'vis-network could not be loaded from the CDN. The other views work ' +
-            'offline; to get the graph on an isolated network, download the two ' +
-            'libraries next to this page and reload:';
+            'The graph library that ships with the viewer could not be loaded. ' +
+            'Every other view still works; the file is expected at:';
         const cmd = document.createElement('code');
-        cmd.textContent = 'https://unpkg.com/vis-network/standalone/umd/vis-network.min.js';
+        cmd.textContent = 'static/js/vis-network.min.js';
         fallback.appendChild(title);
         fallback.appendChild(text);
         fallback.appendChild(cmd);
@@ -190,6 +220,16 @@ function exportVisibleRowsAsCSV() {
     if (!table) return;
 
     const cellText = cell => {
+        // form controls carry their value in .value, not in the text
+        const control = cell.querySelector('input, select');
+        if (control) {
+            const badge = cell.querySelector('.badge');
+            return [badge ? badge.textContent.trim() : '', control.value]
+                .filter(Boolean)
+                .join(' ')
+                .trim();
+        }
+
         const copy = cell.cloneNode(true);
         copy.querySelectorAll('button').forEach(button => button.remove());
         const items = copy.querySelectorAll('li');
@@ -240,21 +280,23 @@ function setupThemeControls() {
     });
 }
 
+// Search and the status buttons feed one combined pass; app.js calls these by
+// name, they are the only definitions.
+function filterTables(searchTerm) {
+    uiFilterState.term = (searchTerm || '').toLowerCase();
+    applyUiFilters();
+}
+
+function filterPortsTableByStatus(status) {
+    uiFilterState.status = (status || 'all').toLowerCase();
+    applyUiFilters();
+}
+
+function exportCurrentViewAsCSV() {
+    exportVisibleRowsAsCSV();
+}
+
 function setupFilterOverrides() {
-    // The table module declares these globals; replace them so search and the
-    // status buttons feed one combined pass.
-    window.filterTables = function (searchTerm) {
-        uiFilterState.term = (searchTerm || '').toLowerCase();
-        applyUiFilters();
-    };
-
-    window.filterPortsTableByStatus = function (status) {
-        uiFilterState.status = (status || 'all').toLowerCase();
-        applyUiFilters();
-    };
-
-    window.exportCurrentViewAsCSV = exportVisibleRowsAsCSV;
-
     // Recount whenever the tables are (re)built.
     if (typeof window.populateTables === 'function') {
         const populate = window.populateTables;

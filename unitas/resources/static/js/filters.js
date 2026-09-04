@@ -1,113 +1,72 @@
-// Filter and search functionality
-let filteredItems = {
-    hosts: new Set(),
-    services: new Set(),
-    nodes: new Set(),
-    edges: new Set()
-};
+// Graph sidebar filters.
+//
+// The filters are predicates evaluated by createGraphData() while it builds the
+// nodes and edges. An earlier version collected matching ids into a set and then
+// rebuilt the graph from the unfiltered data, so none of the controls except
+// "show hosts without open ports" had any effect.
+
+function getGraphFilters() {
+    const value = (id, fallback) => {
+        const element = document.getElementById(id);
+        return element ? element.value : fallback;
+    };
+    const checked = (id, fallback) => {
+        const element = document.getElementById(id);
+        return element ? element.checked : fallback;
+    };
+
+    return {
+        service: value('service-filter', 'all'),
+        portMin: parseInt(value('port-min', '1'), 10) || 1,
+        portMax: parseInt(value('port-max', '65535'), 10) || 65535,
+        subnet: value('subnet-filter', '').trim(),
+        showUncertain: checked('show-uncertain', true),
+        showUpHosts: checked('show-up-hosts', true)
+    };
+}
+
+function hostMatchesFilters(host, filters) {
+    if (filters.subnet && !host.ip.startsWith(filters.subnet)) {
+        return false;
+    }
+    return true;
+}
+
+function portMatchesFilters(port, filters) {
+    const portNumber = parseInt(port.port, 10);
+    if (portNumber < filters.portMin || portNumber > filters.portMax) {
+        return false;
+    }
+
+    if (filters.service !== 'all' && port.service.replace('?', '') !== filters.service) {
+        return false;
+    }
+
+    if (!filters.showUncertain && (port.uncertain || port.service.includes('?'))) {
+        return false;
+    }
+
+    return true;
+}
+
+// Tells the user what the filters actually did, so an empty graph is
+// distinguishable from a broken one.
+function updateFilterSummary(counts) {
+    const summary = document.getElementById('filter-summary');
+    if (!summary) return;
+
+    if (counts.hosts === counts.totalHosts && counts.ports === counts.totalPorts) {
+        summary.textContent = `${counts.totalHosts} hosts, ${counts.totalPorts} ports`;
+        return;
+    }
+
+    summary.textContent =
+        `${counts.hosts} of ${counts.totalHosts} hosts, ` +
+        `${counts.ports} of ${counts.totalPorts} ports`;
+}
 
 function applyFilters() {
-    const serviceFilter = document.getElementById('service-filter').value;
-    const portMin = parseInt(document.getElementById('port-min').value) || 1;
-    const portMax = parseInt(document.getElementById('port-max').value) || 65535;
-    const subnetFilter = document.getElementById('subnet-filter').value.trim();
-    const showUncertain = document.getElementById('show-uncertain').checked;
-
-    // Clear previous filter results
-    filteredItems.hosts.clear();
-    filteredItems.services.clear();
-    filteredItems.nodes.clear();
-    filteredItems.edges.clear();
-
-    // Filter by service
-    if (serviceFilter !== "all") {
-        const serviceNodes = nodesDataset.get({
-            filter: node => node.type === "service" && node.service === serviceFilter
-        });
-
-        serviceNodes.forEach(node => {
-            filteredItems.services.add(node.id);
-
-            // Add connected hosts to the filter list
-            getConnectedHosts(node.id).forEach(hostId => {
-                filteredItems.hosts.add(hostId);
-            });
-        });
-    }
-
-    // Filter by port range
-    if (portMin > 1 || portMax < 65535) {
-        window.scanData.hosts.forEach(host => {
-            const portsInRange = host.ports.filter(port => {
-                const portNumber = parseInt(port.port);
-                return portNumber >= portMin && portNumber <= portMax;
-            });
-
-            if (portsInRange.length > 0) {
-                const hostNodes = nodesDataset.get({
-                    filter: node => node.type === "host" && node.ip === host.ip
-                });
-
-                if (hostNodes.length > 0) {
-                    const hostNode = hostNodes[0];
-                    filteredItems.hosts.add(hostNode.id);
-
-                    // Add connected services to filter list
-                    portsInRange.forEach(port => {
-                        const serviceName = port.service.replace("?", "");
-                        const serviceNodes = nodesDataset.get({
-                            filter: node => node.type === "service" && node.service === serviceName
-                        });
-
-                        if (serviceNodes.length > 0) {
-                            filteredItems.services.add(serviceNodes[0].id);
-                        }
-                    });
-                }
-            }
-        });
-    }
-
-    // Filter by subnet
-    if (subnetFilter) {
-        const filteredNodes = nodesDataset.get({
-            filter: node =>
-                (node.type === "host" || node.type === "up-host") &&
-                node.ip &&
-                node.ip.startsWith(subnetFilter)
-        });
-
-        filteredNodes.forEach(node => {
-            if (node.type === "host") {
-                filteredItems.hosts.add(node.id);
-
-                // Add connected services
-                getConnectedServices(node.id).forEach(serviceId => {
-                    filteredItems.services.add(serviceId);
-                });
-            } else {
-                filteredItems.nodes.add(node.id);
-            }
-        });
-    }
-
-    // Filter uncertain services
-    if (!showUncertain) {
-        const uncertainServices = nodesDataset.get({
-            filter: node => node.type === "service" && node.uncertain
-        });
-
-        uncertainServices.forEach(node => {
-            filteredItems.nodes.add(node.id);
-        });
-    }
-
-    // Apply filters by refreshing the graph
-    try {
-        refreshGraph();
-    } catch (error) {
-        console.error("Error applying filters:", error);
-    }
+    refreshGraph();
 }
 
 function resetFilters() {
@@ -118,11 +77,6 @@ function resetFilters() {
     document.getElementById('show-up-hosts').checked = true;
     document.getElementById('show-uncertain').checked = true;
     document.getElementById('highlight-tls').checked = true;
-
-    filteredItems.hosts.clear();
-    filteredItems.services.clear();
-    filteredItems.nodes.clear();
-    filteredItems.edges.clear();
 
     refreshGraph();
 }
@@ -147,7 +101,6 @@ function refreshGraph() {
         highlightTlsServices();
     }
 }
-
 
 function highlightTlsServices() {
     // Check if nodesDataset exists before trying to use it

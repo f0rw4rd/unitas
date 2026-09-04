@@ -6,6 +6,7 @@ import shutil
 import socket
 import sys
 import tempfile
+import re
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 from concurrent.futures import ThreadPoolExecutor
@@ -20,12 +21,19 @@ from unitas import (
     NessusParser,
     search_port_or_service,
     MarkdownConvert,
+    JsonConverter,
     ThreadSafeServiceLookup,
 )
 from unitas.exporter import NessusExporter
 from unitas.merger import NessusMerger, NmapMerger
 from unitas.model import PortDetails
-from unitas.utils import find_nmap_ip_address, generate_service_urls
+from unitas.utils import (
+    WEB_PORT_HINTS,
+    TLS_PORT_HINTS,
+    find_nmap_ip_address,
+    generate_service_urls,
+)
+from unitas.report import build_single_file_report, find_resources_dir
 
 
 class TestThreadSafeServiceLookup(unittest.TestCase):
@@ -1275,6 +1283,82 @@ class TestMixedIpVersionState(unittest.TestCase):
         content = MarkdownConvert({"10.0.0.1": v4, "fe80::1": v6}).convert()
         self.assertIn("10.0.0.1", content)
         self.assertIn("fe80::1", content)
+
+
+class TestMarkdownEscaping(unittest.TestCase):
+    def test_pipes_survive_a_round_trip(self):
+        host = HostScanData("10.0.0.1")
+        host.set_hostname("we|ird")
+        host.add_port("80", "tcp", "Done", "http", "pipe | test")
+
+        document = MarkdownConvert({"10.0.0.1": host}).convert(True)
+        self.assertIn("we\\|ird", document)
+
+        parsed = MarkdownConvert().parse(document)
+        self.assertEqual(parsed["10.0.0.1"].hostname, "we|ird")
+        self.assertEqual(parsed["10.0.0.1"].ports[0].comment, "pipe | test")
+        self.assertEqual(parsed["10.0.0.1"].ports[0].state, "Done")
+
+    def test_pipes_survive_with_the_source_column(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port(
+            "443", "tcp", "TBD", "https", "a | b", source_type="nmap", source_file="s.xml"
+        )
+        document = MarkdownConvert({"10.0.0.1": host}, show_origin=True).convert(True)
+        parsed = MarkdownConvert(show_origin=True).parse(document)
+        port = parsed["10.0.0.1"].ports[0]
+        self.assertEqual(port.comment, "a | b")
+        self.assertEqual(port.sources[0]["type"], "nmap")
+        self.assertEqual(port.sources[0]["file"], "s.xml")
+
+
+class TestSingleFileReport(unittest.TestCase):
+    def setUp(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("443", "tcp", "TBD", "https")
+        self.json_content = JsonConverter({"10.0.0.1": host}).convert()
+
+    def test_report_inlines_everything(self):
+        report = build_single_file_report(self.json_content)
+
+        # no external or relative references are left
+        self.assertNotIn('<script src="http', report)
+        self.assertNotIn('<script src="static/', report)
+        self.assertNotIn('<link rel="stylesheet"', report)
+
+        # the assets and the data are in the document
+        self.assertIn("--surface", report)  # a css custom property
+        self.assertIn("function populateTables", report)
+        self.assertIn("window.scanData =", report)
+        self.assertIn("10.0.0.1", report)
+        self.assertIn("validateAndDisplayData(window.scanData)", report)
+
+    def test_report_ships_the_graph_library(self):
+        report = build_single_file_report(self.json_content)
+        self.assertIn("vis-network", report)
+
+    def test_missing_resources_raise(self):
+        with self.assertRaises(FileNotFoundError):
+            build_single_file_report(self.json_content, resources_dir="/nonexistent")
+
+
+class TestTargetRulesStayInSync(unittest.TestCase):
+    """The viewer repeats the URL rules in JS; keep the port tables identical."""
+
+    def _js_list(self, name, content):
+        match = re.search(name + r"\s*=\s*\[(.*?)\]", content, re.S)
+        self.assertIsNotNone(match, f"{name} not found in targets.js")
+        return {value.strip().strip('"') for value in match.group(1).split(",") if value.strip()}
+
+    def test_port_hints_match_the_python_rules(self):
+        targets_js = os.path.join(
+            find_resources_dir(), "static", "js", "targets.js"
+        )
+        with open(targets_js, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertEqual(self._js_list("WEB_PORT_HINTS", content), WEB_PORT_HINTS)
+        self.assertEqual(self._js_list("TLS_PORT_HINTS", content), TLS_PORT_HINTS)
 
 
 if __name__ == "__main__":

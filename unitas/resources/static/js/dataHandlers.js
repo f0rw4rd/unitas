@@ -55,16 +55,25 @@ function validateAndDisplayData(data) {
     }
 
     // Initialize the visualization
+    loadEdits();
     updateStats();
     populateTables();
     populateServiceFilter();
-    setupEventHandlers();
     hideLoading();
 }
 
 // Utility functions for managing the UI state
 function showError(message) {
+    const initialScreen = document.getElementById('initial-screen');
     const errorMessage = document.getElementById('error-message');
+
+    // the landing screen error element is invisible once the data view is up,
+    // so anything raised later goes to a toast instead
+    if (initialScreen && initialScreen.classList.contains('hidden')) {
+        showToast(message, 'error');
+        return;
+    }
+
     errorMessage.textContent = message;
     errorMessage.classList.remove('hidden');
 }
@@ -155,8 +164,12 @@ function getSubnet(ip) {
     return parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}` : ip;
 }
 
-function getSubnetGroup(ip) {
-    return getSubnet(ip);
+// A pipe in a hostname or comment would end the markdown cell early
+function escapeMarkdownCell(value) {
+    return String(value === undefined || value === null ? '' : value)
+        .replace(/\|/g, '\\|')
+        .replace(/\r?\n/g, ' ')
+        .trim();
 }
 
 // Export functions
@@ -169,10 +182,13 @@ function exportNetworkAsMarkdown() {
     window.scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
             const ip = host.ip;
-            const hostname = host.hostname || '';
+            const hostname = escapeMarkdownCell(host.hostname);
             const portInfo = `${port.port}/${port.protocol}(${port.service})`;
-            const state = port.state || 'TBD';
-            const comment = port.comment || '';
+            const edit = typeof getPortEdit === 'function' ? getPortEdit(host.ip, port) : null;
+            const state = escapeMarkdownCell((edit && edit.state) || port.state || 'TBD');
+            const comment = escapeMarkdownCell(edit && edit.comment !== undefined
+                ? edit.comment
+                : port.comment);
 
             markdown += `|${ip}|${hostname}|${portInfo}|${state}|${comment}|\n`;
         });

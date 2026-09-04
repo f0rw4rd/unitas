@@ -18,6 +18,7 @@ from unitas.merger import NessusMerger, NmapMerger
 from unitas.exporter import NessusExporter
 from unitas.model import HostScanData, merge_states
 from unitas.parser import NessusParser, NmapParser, parse_files_concurrently
+from unitas.report import write_single_file_report
 from unitas.utils import (
     generate_service_urls,
     get_version,
@@ -220,6 +221,19 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "-R",
+        "--html-report",
+        nargs="?",
+        const="unitas_report.html",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Write a single HTML file with the viewer and the scan data inlined "
+            "(default: unitas_report.html). It needs no server and no network."
+        ),
+    )
+
+    parser.add_argument(
         "-T",
         "--report-title",
         help="Specify a custom title for the merged Nessus report",
@@ -366,6 +380,17 @@ def main() -> None:
 
         # Start the HTTP server
         start_http_server(json_content, args.port)
+        return
+
+    if args.html_report:
+        json_exporter = JsonConverter(final_state, hostup_dict, args.origin)
+        json_content = json_exporter.convert()
+        try:
+            output_file = write_single_file_report(json_content, args.html_report)
+        except (FileNotFoundError, OSError) as e:
+            logging.error(f"Could not write the HTML report: {e}")
+            return
+        logging.info(f"Wrote the HTML report to {os.path.abspath(output_file)}")
         return
 
     if args.json:
