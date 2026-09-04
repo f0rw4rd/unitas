@@ -1,6 +1,6 @@
 import logging
 import os
-from time import time
+import time
 from typing import Dict, List
 
 import requests

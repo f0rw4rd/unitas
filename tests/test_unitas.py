@@ -20,6 +20,7 @@ from unitas import (
     MarkdownConvert,
     ThreadSafeServiceLookup,
 )
+from unitas.exporter import NessusExporter
 
 
 class TestThreadSafeServiceLookup(unittest.TestCase):
@@ -997,6 +998,29 @@ class TestMarkdownConvert(unittest.TestCase):
         self.assertEqual(result["192.168.1.1"].hostname, "host1.local")
         self.assertEqual(result["192.168.1.1"].ports[0].service, "http")
         self.assertEqual(result["192.168.1.1"].ports[0].state, "Done")
+
+
+class TestNessusExporter(unittest.TestCase):
+    def _make_exporter(self):
+        with patch("unitas.exporter.config") as mock_config:
+            mock_config.get_access_key.return_value = "access"
+            mock_config.get_secret_key.return_value = "secret"
+            mock_config.get_url.return_value = "https://nessus:8834"
+            return NessusExporter()
+
+    def test_check_export_status_polls_until_ready(self):
+        exporter = self._make_exporter()
+        exporter.ses = MagicMock()
+        exporter.ses.get.return_value.json.side_effect = [
+            {"status": "loading"},
+            {"status": "ready"},
+        ]
+
+        with patch("unitas.exporter.time.sleep") as mock_sleep:
+            exporter._check_export_status(15, 42)
+
+        mock_sleep.assert_called_once_with(5)
+        self.assertEqual(exporter.ses.get.call_count, 2)
 
 
 if __name__ == "__main__":
