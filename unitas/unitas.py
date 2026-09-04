@@ -18,7 +18,12 @@ from unitas.merger import NessusMerger, NmapMerger
 from unitas.exporter import NessusExporter
 from unitas.model import HostScanData, merge_states
 from unitas.parser import NessusParser, NmapParser, parse_files_concurrently
-from unitas.utils import hostup_dict, search_port_or_service, get_version
+from unitas.utils import (
+    generate_service_urls,
+    get_version,
+    hostup_dict,
+    search_port_or_service,
+)
 from unitas.webserver import start_http_server
 
 
@@ -144,6 +149,20 @@ def main() -> None:
         default=False,
         help="Adds the protocol of the port as URL prefix",
     )
+    parser.add_argument(
+        "-w",
+        "--urls",
+        nargs="?",
+        const="web",
+        choices=["web", "all"],
+        default=None,
+        help=(
+            "Print the services as URLs, one per line, to pipe into other tools "
+            "(e.g. EyeWitness, httpx, nuclei). 'web' (default) only prints http/https "
+            "services, 'all' uses the service name as scheme e.g. ssh://10.0.0.1:22"
+        ),
+    )
+
     parser.add_argument(
         "-S",
         "--service",
@@ -361,6 +380,18 @@ def main() -> None:
     if args.service:
         logging.info("Filtering non-service scanned ports")
         final_state = filter_uncertain_services(final_state)
+
+    if args.urls:
+        urls = generate_service_urls(final_state, args.urls)
+        if not urls:
+            logging.error("No services found that can be converted to URLs!")
+            return
+        logging.info(f"Found {len(urls)} service URLs")
+        # only the URLs go to stdout, the logging goes to stderr, so the output
+        # can be piped directly into other tools
+        for url in urls:
+            print(url)
+        return
 
     if args.search:
         hide_ports = args.hide_ports

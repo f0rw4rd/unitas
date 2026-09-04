@@ -4,6 +4,7 @@ import logging
 import os
 import socket
 import threading
+from ipaddress import ip_address
 from typing import Dict, List
 from manuf2 import manuf
 
@@ -169,3 +170,108 @@ def search_port_or_service(
                     matching_ips.add(url)
 
     return sorted(list(matching_ips))
+
+
+# Ports that are commonly web services even when the scan could not identify
+# the service (e.g. a plain SYN scan).
+WEB_PORT_HINTS = {
+    "80",
+    "81",
+    "88",
+    "591",
+    "3000",
+    "5000",
+    "7001",
+    "8000",
+    "8008",
+    "8080",
+    "8081",
+    "8082",
+    "8088",
+    "8888",
+    "9080",
+    "10000",
+}
+TLS_PORT_HINTS = {
+    "443",
+    "832",
+    "981",
+    "1311",
+    "4443",
+    "7002",
+    "8443",
+    "8834",
+    "9443",
+    "10443",
+}
+
+
+def _is_web_service(port: PortDetails) -> bool:
+    service = port.service.lower()
+    if "http" in service or "www" in service:
+        return True
+    # a scan that only knows the port number still gets a guess from the
+    # well known web ports
+    if "?" in service or "unknown" in service:
+        return port.port in WEB_PORT_HINTS or port.port in TLS_PORT_HINTS
+    return False
+
+
+def _uses_tls(port: PortDetails) -> bool:
+    service = port.service.lower()
+    if "https" in service or "ssl" in service or "tls" in service:
+        return True
+    if "tls" in port.comment.lower() or "ssl" in port.comment.lower():
+        return True
+    return port.port in TLS_PORT_HINTS
+
+
+def sort_key_for_ip(ip: str):
+    """Sort key that keeps IPv4 and IPv6 addresses comparable."""
+    address = ip_address(ip)
+    return (address.version, address)
+
+
+def _format_host(ip: str) -> str:
+    # IPv6 literals need brackets to be a valid URL authority
+    try:
+        if ip_address(ip).version == 6:
+            return f"[{ip}]"
+    except ValueError:
+        pass
+    return ip
+
+
+def generate_service_urls(
+    global_state: Dict[str, HostScanData], mode: str = "web"
+) -> List[str]:
+    """Render the open ports as URLs, one per host/port.
+
+    mode "web" only returns http(s) URLs, which is what tools like EyeWitness,
+    httpx or nuclei expect. mode "all" uses the service name as the scheme for
+    every port that has one (e.g. ssh://10.0.0.1:22).
+    """
+    urls: List[str] = []
+    seen = set()
+
+    for ip, host_data in global_state.items():
+        for port in host_data.ports:
+            if mode == "web":
+                if port.protocol != "tcp" or not _is_web_service(port):
+                    continue
+                scheme = "https" if _uses_tls(port) else "http"
+            else:
+                scheme = port.service.lower().replace("?", "").strip()
+                # nothing sensible to build a URL from
+                if not scheme or "unknown" in scheme:
+                    continue
+                scheme = scheme.replace("/", "-")
+
+            url = f"{scheme}://{_format_host(ip)}:{port.port}"
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append((ip, int(port.port), url))
+
+    urls.sort(key=lambda entry: (sort_key_for_ip(entry[0]), entry[1], entry[2]))
+    return [entry[2] for entry in urls]

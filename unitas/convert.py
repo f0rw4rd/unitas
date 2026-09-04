@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from ipaddress import ip_address
 import json
 import logging
 import re
@@ -8,7 +7,7 @@ from typing import Dict, List, Optional
 
 from unitas import HostScanData
 from unitas.model import PortDetails
-from unitas.utils import get_version
+from unitas.utils import get_version, sort_key_for_ip
 
 
 class Convert(ABC):
@@ -27,7 +26,8 @@ class Convert(ABC):
     def sort_global_state_by_ip(
         global_state: Dict[str, HostScanData],
     ) -> Dict[str, HostScanData]:
-        sorted_ips = sorted(global_state.keys(), key=ip_address)
+        # comparing an IPv4Address with an IPv6Address raises, sort by version first
+        sorted_ips = sorted(global_state.keys(), key=sort_key_for_ip)
         return {ip: global_state[ip] for ip in sorted_ips}
 
 

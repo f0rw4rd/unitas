@@ -40,6 +40,7 @@ unitas /path/to/scan/folder [options]
 - `-u`, `--update`: Update existing markdown from state.md or stdin
 - `-s`, `--search`: Search for specific port numbers or service names (comma-separated)
 - `-U`, `--url`: Adds the protocol of the port as URL prefix (used for search)
+- `-w`, `--urls [web|all]`: Print the services as URLs, one per line, to pipe into other tools
 - `-S`, `--service`: Show only service scanned ports 
 - `-r`, `--rescan`: Print an Nmap command to re-scan the ports not service scanned
 - `-e`, `--export`: Export all scans from Nessus
@@ -51,6 +52,35 @@ unitas /path/to/scan/folder [options]
 - `-H`, `--http-server`: Start an HTTP server with interactive visualization of scan results
 - `--port`: Specify the port for the HTTP server (default: 8000)
 - `--report-title`: Specify a custom title for the merged Nessus report
+
+### Service URLs
+
+To feed the scan results into other tooling, print the services as URLs. Only the URLs
+go to stdout (logging goes to stderr), so the output can be piped directly:
+
+```
+unitas /path/to/scan/folder -w | tee web-targets.txt
+eyewitness --web -f web-targets.txt
+```
+
+```
+http://10.31.112.21:80
+https://10.31.112.21:443
+http://10.31.112.22:8080
+```
+
+`-w` (or `--urls web`) prints http/https services only: ports whose service name looks
+like HTTP, plus well known web ports that were only port scanned. TLS is taken from the
+service name, the TLS comment or the port. `--urls all` uses the service name as scheme
+for every identified service instead:
+
+```
+unitas /path/to/scan/folder --urls all
+ssh://10.31.112.21:22
+smb://10.31.112.21:445
+```
+
+Combine it with `-S` to skip ports that were never service scanned.
 
 ## Interactive Visualization
 

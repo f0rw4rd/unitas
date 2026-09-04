@@ -25,7 +25,7 @@ from unitas import (
 from unitas.exporter import NessusExporter
 from unitas.merger import NessusMerger, NmapMerger
 from unitas.model import PortDetails
-from unitas.utils import find_nmap_ip_address
+from unitas.utils import find_nmap_ip_address, generate_service_urls
 
 
 class TestThreadSafeServiceLookup(unittest.TestCase):
@@ -1203,6 +1203,78 @@ class TestSearchPortOrService(unittest.TestCase):
         host.add_port("161", "udp", "TBD", "snmp")
         result = search_port_or_service({"10.0.0.9": host}, ["snmp"], False, False)
         self.assertEqual(result, ["10.0.0.9"])
+
+
+class TestServiceUrls(unittest.TestCase):
+    def setUp(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("80", "tcp", "TBD", "http")
+        host.add_port("443", "tcp", "TBD", "https")
+        host.add_port("22", "tcp", "TBD", "ssh")
+        host.add_port("161", "udp", "TBD", "snmp")
+        # only port scanned, but a well known web port
+        host.add_port("8080", "tcp", "TBD", "unknown?")
+        # TLS, but not a web service
+        host.add_port("3389", "tcp", "TBD", "msrdp", "TLS")
+        # web service tagged as TLS by the scanner
+        host.add_port("7002", "tcp", "TBD", "http", "TLS")
+
+        ipv6_host = HostScanData("::1")
+        ipv6_host.add_port("8000", "tcp", "TBD", "http")
+
+        self.state = {"10.0.0.1": host, "::1": ipv6_host}
+
+    def test_web_mode_only_returns_http_services(self):
+        urls = generate_service_urls(self.state)
+        self.assertEqual(
+            urls,
+            [
+                "http://10.0.0.1:80",
+                "https://10.0.0.1:443",
+                "https://10.0.0.1:7002",
+                "http://10.0.0.1:8080",
+                "http://[::1]:8000",
+            ],
+        )
+
+    def test_all_mode_uses_the_service_as_scheme(self):
+        urls = generate_service_urls(self.state, "all")
+        self.assertIn("ssh://10.0.0.1:22", urls)
+        self.assertIn("snmp://10.0.0.1:161", urls)
+        self.assertIn("msrdp://10.0.0.1:3389", urls)
+        # a port without an identified service has no scheme to use
+        self.assertNotIn("unknown://10.0.0.1:8080", urls)
+
+    def test_uncertain_services_keep_their_scheme(self):
+        host = HostScanData("10.0.0.2")
+        host.add_port("8443", "tcp", "TBD", "https?")
+        host.add_port("8081", "tcp", "TBD", "http-alt?")
+        urls = generate_service_urls({"10.0.0.2": host})
+        self.assertEqual(urls, ["http://10.0.0.2:8081", "https://10.0.0.2:8443"])
+
+    def test_duplicates_are_removed(self):
+        host = HostScanData("10.0.0.3")
+        host.add_port("443", "tcp", "TBD", "https")
+        host.add_port("443", "udp", "TBD", "https")
+        self.assertEqual(
+            generate_service_urls({"10.0.0.3": host}), ["https://10.0.0.3:443"]
+        )
+
+    def test_mixed_ip_versions_do_not_break_sorting(self):
+        # sorting IPv4 against IPv6 with ip_address() raises a TypeError
+        urls = generate_service_urls(self.state)
+        self.assertEqual(urls[-1], "http://[::1]:8000")
+
+
+class TestMixedIpVersionState(unittest.TestCase):
+    def test_markdown_handles_ipv4_and_ipv6(self):
+        v4 = HostScanData("10.0.0.1")
+        v4.add_port("80", "tcp", "TBD", "http")
+        v6 = HostScanData("fe80::1")
+        v6.add_port("80", "tcp", "TBD", "http")
+        content = MarkdownConvert({"10.0.0.1": v4, "fe80::1": v6}).convert()
+        self.assertIn("10.0.0.1", content)
+        self.assertIn("fe80::1", content)
 
 
 if __name__ == "__main__":
