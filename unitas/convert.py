@@ -152,7 +152,8 @@ class MarkdownConvert(Convert):
                             if not source_entry:
                                 continue
 
-                            source_parts = [s.strip() for s in source_entry.split("/")]
+                            # sources are written as "type:file[:date]"
+                            source_parts = [s.strip() for s in source_entry.split(":")]
                             source_type = (
                                 source_parts[0] if len(source_parts) > 0 else ""
                             )

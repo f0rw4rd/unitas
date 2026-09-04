@@ -18,10 +18,13 @@ def start_http_server(json_content, port=8000):
         resources_dir = None
         # Try to find the packaged resources directory
         try:
-            import pkg_resources
+            from importlib.resources import files
 
-            resources_dir = pkg_resources.resource_filename("unitas", "resources")
-        except (ImportError, pkg_resources.DistributionNotFound):
+            resources_dir = str(files("unitas") / "resources")
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug(f"Could not resolve packaged resources: {e}")
+
+        if not resources_dir or not os.path.exists(resources_dir):
             # Fall back to looking in the script directory
             script_dir = os.path.dirname(os.path.abspath(__file__))
             potential_resources = os.path.join(script_dir, "resources")
@@ -79,17 +82,17 @@ def start_http_server(json_content, port=8000):
         with open(os.path.join(temp_dir, "index.html"), "w", encoding="utf-8") as f:
             f.write(html_content)
 
-        # Save the current directory
-        original_dir = os.getcwd()
-
-        # Change to the temp directory
-        os.chdir(temp_dir)
-
-        # Create a custom HTTP handler to add CORS headers
+        # Create a custom HTTP handler to add CORS headers, serving the temp
+        # directory directly instead of changing the process wide cwd
         class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=temp_dir, **kwargs)
+
             def end_headers(self):
                 # Restrict CORS to localhost origins only for security
-                self.send_header("Access-Control-Allow-Origin", f"http://localhost:{port}")
+                self.send_header(
+                    "Access-Control-Allow-Origin", f"http://localhost:{port}"
+                )
 
                 # Add cache prevention headers for all responses
                 self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -99,7 +102,9 @@ def start_http_server(json_content, port=8000):
                 super().end_headers()
 
         # Create a simple HTTP server
-        httpd = socketserver.TCPServer(("", port), CustomHTTPRequestHandler)
+        socketserver.TCPServer.allow_reuse_address = True
+        # bind to loopback only, the scan results should not be exposed to the network
+        httpd = socketserver.TCPServer(("127.0.0.1", port), CustomHTTPRequestHandler)
 
         # Start server in a new thread
         server_thread = threading.Thread(target=httpd.serve_forever)
@@ -123,9 +128,7 @@ def start_http_server(json_content, port=8000):
         # Shutdown the server
         httpd.shutdown()
         server_thread.join()
-
-        # Return to the original directory
-        os.chdir(original_dir)
+        httpd.server_close()
 
         return True
 

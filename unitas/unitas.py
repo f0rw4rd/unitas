@@ -7,7 +7,6 @@ import argparse
 import logging
 
 from hashlib import sha512
-from xml.etree.ElementTree import ParseError
 from unitas.convert import (
     GrepConverter,
     JsonConverter,
@@ -92,6 +91,7 @@ def filter_uncertain_services(
         if service_ports:
             new_host_data = HostScanData(ip)
             new_host_data.hostname = host_data.hostname
+            new_host_data.mac_address = host_data.mac_address
             new_host_data.ports = service_ports
             certain_services[ip] = new_host_data
     return certain_services
@@ -238,12 +238,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    setup_logging(args.verbose)
+
     if args.update:
         existing_state = load_markdown_state("state.md")
     else:
         existing_state = {}
-
-    setup_logging(args.verbose)
 
     logging.info(f"Unitas v{get_version()} starting up.")
     logging.info(BANNER)
@@ -282,19 +282,6 @@ def main() -> None:
         return
 
     global_state = parse_files_concurrently(parsers)
-
-    for p in parsers:
-        try:
-            scan_results = p.parse()
-            new_hosts = merge_states(global_state, scan_results)
-            if new_hosts:
-                logging.debug(
-                    "New hosts added: %s", ", ".join(str(host) for host in new_hosts)
-                )
-        except ParseError:
-            logging.error("Could not load %s, invalid XML", p.file_path)
-        except ValueError as e:
-            logging.error(f"Failed to parse {p.file_path}: {e}")
 
     final_state = merge_states(existing_state, global_state)
 

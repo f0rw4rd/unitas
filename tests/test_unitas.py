@@ -2,8 +2,10 @@
 import unittest
 from unittest.mock import patch, MagicMock
 import os
+import shutil
 import socket
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +23,9 @@ from unitas import (
     ThreadSafeServiceLookup,
 )
 from unitas.exporter import NessusExporter
+from unitas.merger import NessusMerger, NmapMerger
+from unitas.model import PortDetails
+from unitas.utils import find_nmap_ip_address
 
 
 class TestThreadSafeServiceLookup(unittest.TestCase):
@@ -1025,6 +1030,179 @@ class TestNessusExporter(unittest.TestCase):
 
         mock_sleep.assert_called_once_with(5)
         self.assertEqual(exporter.ses.get.call_count, 2)
+
+
+class TestNessusPortScannerParsing(unittest.TestCase):
+    """The port scanner plugins have their own family and must not be treated
+    as service detections, but they still have to be parsed."""
+
+    HOST = b"""<ReportHost name="10.0.0.1">
+    <HostProperties><tag name="host-ip">10.0.0.1</tag></HostProperties>
+    <ReportItem port="445" svc_name="cifs" protocol="tcp" pluginID="1" pluginName="SMB check" pluginFamily="Windows"/>
+    <ReportItem port="8080" svc_name="http" protocol="tcp" pluginID="11219" pluginName="Nessus SYN scanner" pluginFamily="Port scanners"/>
+    </ReportHost>"""
+
+    def setUp(self):
+        self.parser = NessusParser(
+            os.path.join(os.path.dirname(__file__), "nessus_files", "nessus-sample-1.nessus")
+        )
+        self.parser.data = {}
+        self.parser.root = ET.fromstring(
+            b"<NessusClientData_v2><Report>" + self.HOST + b"</Report></NessusClientData_v2>"
+        )
+
+    def test_port_scanner_ports_are_parsed_and_marked_uncertain(self):
+        result = self.parser.parse()
+        ports = {p.port: p for p in result["10.0.0.1"].ports}
+        self.assertIn("8080", ports, "port scanner plugins were skipped")
+        self.assertIn("?", ports["8080"].service)
+        # the service detection plugin stays certain
+        self.assertEqual(ports["445"].service, "smb")
+
+
+class TestNmapAddressLookup(unittest.TestCase):
+    def test_mac_address_is_not_used_as_ip(self):
+        host = ET.fromstring(
+            b'<host><address addr="00:11:22:33:44:55" addrtype="mac"/>'
+            b'<address addr="192.168.1.5" addrtype="ipv4"/></host>'
+        )
+        self.assertEqual(find_nmap_ip_address(host), "192.168.1.5")
+
+    def test_ipv6_only_host(self):
+        host = ET.fromstring(b'<host><address addr="::1" addrtype="ipv6"/></host>')
+        self.assertEqual(find_nmap_ip_address(host), "::1")
+
+    def test_mac_only_host_has_no_ip(self):
+        host = ET.fromstring(
+            b'<host><address addr="00:11:22:33:44:55" addrtype="mac"/></host>'
+        )
+        self.assertEqual(find_nmap_ip_address(host), "")
+
+
+class TestMarkdownSourceRoundTrip(unittest.TestCase):
+    def test_sources_survive_a_convert_parse_cycle(self):
+        host = HostScanData("10.0.0.7")
+        host.add_port(
+            "443",
+            "tcp",
+            "TBD",
+            "https",
+            "TLS",
+            source_type="nmap",
+            source_file="scan.xml",
+        )
+        converter = MarkdownConvert({"10.0.0.7": host}, show_origin=True)
+        parsed = MarkdownConvert(show_origin=True).parse(converter.convert())
+
+        sources = parsed["10.0.0.7"].ports[0].sources
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["type"], "nmap")
+        self.assertEqual(sources[0]["file"], "scan.xml")
+
+
+class TestNessusMerger(unittest.TestCase):
+    def test_existing_host_without_children_is_not_duplicated(self):
+        merger = NessusMerger("/tmp", "/tmp/merged")
+        merger.report = ET.fromstring(b'<Report><ReportHost name="10.0.0.1"/></Report>')
+        tree = ET.ElementTree(
+            ET.fromstring(b'<Report><ReportHost name="10.0.0.1"/></Report>')
+        )
+        merger._merge_hosts(tree)
+        self.assertEqual(len(merger.report.findall("ReportHost")), 1)
+
+    def test_existing_report_item_is_not_duplicated(self):
+        merger = NessusMerger("/tmp", "/tmp/merged")
+        item = b'<ReportItem port="443" pluginID="42"/>'
+        existing_host = ET.fromstring(b'<ReportHost name="h">' + item + b"</ReportHost>")
+        new_host = ET.fromstring(b'<ReportHost name="h">' + item + b"</ReportHost>")
+        merger._merge_report_items(new_host, existing_host)
+        self.assertEqual(len(existing_host.findall("ReportItem")), 1)
+
+    def test_output_directory_check_does_not_match_siblings(self):
+        merger = NessusMerger("/tmp/scans", "/tmp/scans/merged")
+        self.assertTrue(merger._is_in_output_directory("/tmp/scans/merged/report.nessus"))
+        self.assertFalse(merger._is_in_output_directory("/tmp/scans/merged_old.nessus"))
+
+
+class TestNmapMergerParse(unittest.TestCase):
+    SCAN = """<?xml version="1.0"?>
+<nmaprun>
+<host><status state="up" reason="syn-ack"/>
+<address addr="00:11:22:33:44:55" addrtype="mac"/>
+<address addr="192.168.1.10" addrtype="ipv4"/>
+<hostnames><hostname name="a.local" type="PTR"/><hostname name="b.local" type="user"/></hostnames>
+<ports><port protocol="tcp" portid="22"><state state="open"/><service name="ssh"/></port></ports>
+<hostscript><script id="smb-os" output="windows"/><script id="nbstat" output="names"/></hostscript>
+</host>
+</nmaprun>
+"""
+
+    SECOND_SCAN = """<?xml version="1.0"?>
+<nmaprun>
+<host><status state="up" reason="syn-ack"/>
+<address addr="192.168.1.10" addrtype="ipv4"/>
+<hostnames><hostname name="c.local" type="PTR"/><hostname name="d.local" type="PTR"/></hostnames>
+<ports><port protocol="tcp" portid="80"><state state="open"/><service name="http"/></port></ports>
+</host>
+</nmaprun>
+"""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        for name, scan in (("a_scan.xml", self.SCAN), ("b_scan.xml", self.SECOND_SCAN)):
+            with open(os.path.join(self.tmp_dir, name), "w", encoding="utf-8") as f:
+                f.write(scan)
+        self.out_dir = os.path.join(self.tmp_dir, "merged")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir)
+
+    def _merged_host(self):
+        NmapMerger(self.tmp_dir, self.out_dir).parse()
+        merged = ET.parse(os.path.join(self.out_dir, "merged_nmap.xml"))
+        return merged.find(".//host")
+
+    def test_all_hostnames_are_kept(self):
+        host = self._merged_host()
+        names = sorted(h.get("name") for h in host.findall(".//hostname"))
+        self.assertEqual(names, ["a.local", "b.local", "c.local", "d.local"])
+
+    def test_hostscripts_are_kept_per_script_id(self):
+        host = self._merged_host()
+        scripts = host.findall("hostscript/script")
+        self.assertEqual({s.get("id") for s in scripts}, {"smb-os", "nbstat"})
+
+    def test_ports_of_all_scans_are_kept(self):
+        host = self._merged_host()
+        ports = sorted(p.get("portid") for p in host.findall(".//port"))
+        self.assertEqual(ports, ["22", "80"])
+
+
+class TestNmapHostFindPort(unittest.TestCase):
+    def test_find_port_returns_the_element(self):
+        nmap_host = NmapHost("192.168.1.1", ET.Element("host"))
+        port = ET.Element("port", attrib={"protocol": "tcp", "portid": "80"})
+        ET.SubElement(port, "state", attrib={"state": "open"})
+        nmap_host.add_port(port)
+        self.assertIsNotNone(nmap_host.find_port("tcp", "80"))
+        self.assertIsNone(nmap_host.find_port("udp", "80"))
+
+
+class TestPortValidation(unittest.TestCase):
+    def test_non_string_ports_are_invalid(self):
+        self.assertFalse(PortDetails.is_valid_port(None))
+        self.assertFalse(PortDetails.is_valid_port(["80"]))
+        self.assertFalse(PortDetails.is_valid_port("0"))
+        self.assertTrue(PortDetails.is_valid_port("80"))
+
+
+class TestSearchPortOrService(unittest.TestCase):
+    def test_udp_default_port_uses_the_udp_lookup(self):
+        host = HostScanData("10.0.0.9")
+        # 161/udp is snmp, 161/tcp is not, so the port must not be appended
+        host.add_port("161", "udp", "TBD", "snmp")
+        result = search_port_or_service({"10.0.0.9": host}, ["snmp"], False, False)
+        self.assertEqual(result, ["10.0.0.9"])
 
 
 if __name__ == "__main__":
