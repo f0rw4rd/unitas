@@ -5,7 +5,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Unitas Network Scan Viewer</title>
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23263544'/%3E%3Ccircle cx='16' cy='9' r='3.4' fill='%232f7fd1'/%3E%3Ccircle cx='8' cy='23' r='3.4' fill='%232f9e5f'/%3E%3Ccircle cx='24' cy='23' r='3.4' fill='%23d98324'/%3E%3Cpath d='M16 12.4 8 19.6M16 12.4l8 7.2M8 23h16' stroke='%239fb0c0' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="static/css/styles.css">
+    <script>
+        // Applied before first paint so the page never flashes the light theme.
+        (function () {
+            try {
+                var stored = localStorage.getItem('unitasTheme');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.setAttribute('data-theme', stored);
+                }
+            } catch (e) { /* storage can be blocked, the media query still applies */ }
+        })();
+    </script>
     <!-- External Libraries -->
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <script src="https://unpkg.com/vis-data/standalone/umd/vis-data.min.js"></script>
@@ -13,7 +26,14 @@
 
 <body>
     <header>
-        <h1>Unitas Network Scan Viewer</h1>
+        <div class="brand">
+            <h1>Unitas</h1>
+            <span class="brand-tag">Network Scan Viewer</span>
+        </div>
+        <div class="header-actions">
+            <button id="theme-toggle" class="icon-button" type="button" aria-pressed="false"
+                title="Toggle dark mode (T)">Dark mode</button>
+        </div>
     </header>
     <div class="container">
         <!-- Initial screen for loading data -->
@@ -28,7 +48,9 @@
                 </div>
             </div>
             <p id="error-message" class="error-message hidden"></p>
-            <p>Generate JSON files with: <code>unitas /path/to/scan/folder --json -o output.json</code></p>
+            <p>Generate JSON files with: <code>unitas /path/to/scan/folder --json</code> (writes
+                <code>unitas.json</code>), or open the viewer directly with <code>unitas /path/to/scan/folder -H</code>
+            </p>
         </div>
 
         <!-- Data view (initially hidden) -->
@@ -66,9 +88,12 @@
             </div>
 
             <div class="search-container">
-                <input type="text" id="search" placeholder="Search for hosts, ports, services... (Press / or Ctrl+F)">
-                <div class="keyboard-shortcuts-hint">
-                    <span class="shortcuts-toggle" id="shortcuts-toggle">⌨️ Shortcuts</span>
+                <input type="text" id="search" aria-label="Search hosts, ports and services"
+                    placeholder="Search for hosts, ports, services... (Press / or Ctrl+F)">
+                <div class="search-meta">
+                    <span class="result-count" id="result-count"></span>
+                    <div class="keyboard-shortcuts-hint">
+                    <span class="shortcuts-toggle" id="shortcuts-toggle" role="button" tabindex="0">Shortcuts</span>
                     <div class="shortcuts-panel hidden" id="shortcuts-panel">
                         <div class="shortcuts-header">Keyboard Shortcuts</div>
                         <div class="shortcut-item"><kbd>/</kbd> or <kbd>Ctrl+F</kbd> - Focus search</div>
@@ -76,16 +101,23 @@
                         <div class="shortcut-item"><kbd>1-5</kbd> - Switch views</div>
                         <div class="shortcut-item"><kbd>Ctrl+R</kbd> - Reload data</div>
                         <div class="shortcut-item"><kbd>Ctrl+E</kbd> - Export markdown</div>
+                        <div class="shortcut-item"><kbd>T</kbd> - Toggle dark mode</div>
+                    </div>
                     </div>
                 </div>
             </div>
 
-            <div class="nav">
-                <div class="nav-item active" data-view="hosts-view">Hosts</div>
-                <div class="nav-item" data-view="ports-view">Ports</div>
-                <div class="nav-item" data-view="services-view">Services</div>
-                <div class="nav-item" data-view="up-hosts-view">Up Hosts</div>
-                <div class="nav-item" data-view="graph-view">Network Graph</div>
+            <div class="nav" role="tablist">
+                <button type="button" class="nav-item active" role="tab" aria-selected="true"
+                    aria-controls="hosts-view" data-view="hosts-view">Hosts</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="ports-view" data-view="ports-view">Ports</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="services-view" data-view="services-view">Services</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="up-hosts-view" data-view="up-hosts-view">Up Hosts</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="graph-view" data-view="graph-view">Network Graph</button>
             </div>
 
             <div id="hosts-view" class="view active">
@@ -277,6 +309,7 @@
                         </div>
                         <div id="graph-area">
                             <div id="graph-container"></div>
+                            <div id="graph-fallback" class="graph-fallback hidden"></div>
                             <div class="graph-options">
                                 <button id="export-png" class="graph-option-btn">Export PNG</button>
                                 <button id="save-view" class="graph-option-btn">Save View</button>
@@ -316,10 +349,11 @@
     </div>
 
     <footer>
-        Unitas Network Graph Viewer - Enhanced Visualization Tool
+        Unitas Network Scan Viewer
     </footer>
 
     <!-- Application Scripts -->
+    <script src="static/js/ui.js"></script>
     <script src="static/js/dataHandlers.js"></script>
     <script src="static/js/tableRenderers.js"></script>
     <script src="static/js/networkGraph.js"></script>

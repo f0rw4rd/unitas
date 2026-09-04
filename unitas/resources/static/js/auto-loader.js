@@ -19,14 +19,18 @@ document.addEventListener('DOMContentLoaded', function () {
     debugContainer.style.display = 'none'; // Initially hidden
     document.body.appendChild(debugContainer);
 
-    // Add toggle button for debug panel
+    // Add toggle button for debug panel, only when explicitly asked for with
+    // ?debug=1 -- it used to sit on top of every page for every user.
+    const debugRequested = new URLSearchParams(window.location.search).get('debug') === '1';
     const debugToggle = document.createElement('button');
     debugToggle.textContent = 'Show Debug Info';
     debugToggle.style.position = 'fixed';
     debugToggle.style.bottom = '10px';
     debugToggle.style.left = '10px';
     debugToggle.style.zIndex = '10000';
-    document.body.appendChild(debugToggle);
+    if (debugRequested) {
+        document.body.appendChild(debugToggle);
+    }
 
     function logDebug(message) {
         console.log(message);

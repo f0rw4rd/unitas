@@ -1,4 +1,23 @@
 // Table rendering functions
+
+// A copy icon that does not depend on emoji fonts and stays out of exported
+// text (an aria-label carries the meaning instead of a glyph).
+function createCopyButton(title, value, message) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'copy-btn';
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.innerHTML =
+        '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">' +
+        '<rect x="5.5" y="5.5" width="8" height="9" rx="1.5" fill="none" stroke="currentColor"></rect>' +
+        '<path d="M10.5 3.5h-8v9" fill="none" stroke="currentColor"></path></svg>';
+    button.onclick = (e) => {
+        e.stopPropagation();
+        copyToClipboard(value, message);
+    };
+    return button;
+}
 function populateTables() {
     if (!scanData) return;
 
@@ -36,15 +55,9 @@ function populateHostsTable() {
         ipText.textContent = host.ip;
         ipContainer.appendChild(ipText);
         
-        const copyBtn = document.createElement('button');
-        copyBtn.className = 'copy-btn';
-        copyBtn.textContent = '📋';
-        copyBtn.title = 'Copy IP address';
-        copyBtn.onclick = (e) => {
-            e.stopPropagation();
-            copyToClipboard(host.ip, 'IP address copied!');
-        };
-        ipContainer.appendChild(copyBtn);
+        ipContainer.appendChild(
+            createCopyButton('Copy IP address', host.ip, 'IP address copied!')
+        );
         
         ipCell.appendChild(ipContainer);
         row.appendChild(ipCell);
@@ -141,15 +154,9 @@ function populatePortsTable() {
         ipText.textContent = port.ip;
         ipContainer.appendChild(ipText);
         
-        const copyIpBtn = document.createElement('button');
-        copyIpBtn.className = 'copy-btn';
-        copyIpBtn.textContent = '📋';
-        copyIpBtn.title = 'Copy IP address';
-        copyIpBtn.onclick = (e) => {
-            e.stopPropagation();
-            copyToClipboard(port.ip, 'IP address copied!');
-        };
-        ipContainer.appendChild(copyIpBtn);
+        ipContainer.appendChild(
+            createCopyButton('Copy IP address', port.ip, 'IP address copied!')
+        );
         
         ipCell.appendChild(ipContainer);
         row.appendChild(ipCell);
@@ -168,15 +175,9 @@ function populatePortsTable() {
         portText.textContent = port.port;
         portContainer.appendChild(portText);
         
-        const copyPortBtn = document.createElement('button');
-        copyPortBtn.className = 'copy-btn';
-        copyPortBtn.textContent = '📋';
-        copyPortBtn.title = 'Copy port number';
-        copyPortBtn.onclick = (e) => {
-            e.stopPropagation();
-            copyToClipboard(port.port, 'Port number copied!');
-        };
-        portContainer.appendChild(copyPortBtn);
+        portContainer.appendChild(
+            createCopyButton('Copy port number', port.port, 'Port number copied!')
+        );
         
         portCell.appendChild(portContainer);
         row.appendChild(portCell);
