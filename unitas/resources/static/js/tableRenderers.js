@@ -2,22 +2,32 @@
 
 // A copy icon that does not depend on emoji fonts and stays out of exported
 // text (an aria-label carries the meaning instead of a glyph).
+let copyButtonTemplate = null;
+
 function createCopyButton(title, value, message) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'copy-btn';
+    if (copyButtonTemplate === null) {
+        // built once and drawn by the stylesheet: an inline SVG here meant four
+        // extra elements per row, and parsing its markup per row on top
+        copyButtonTemplate = document.createElement('button');
+        copyButtonTemplate.type = 'button';
+        copyButtonTemplate.className = 'copy-btn';
+    }
+
+    const button = copyButtonTemplate.cloneNode(false);
     button.title = title;
     button.setAttribute('aria-label', title);
-    button.innerHTML =
-        '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false">' +
-        '<rect x="5.5" y="5.5" width="8" height="9" rx="1.5" fill="none" stroke="currentColor"></rect>' +
-        '<path d="M10.5 3.5h-8v9" fill="none" stroke="currentColor"></path></svg>';
-    button.onclick = (e) => {
-        e.stopPropagation();
-        copyToClipboard(value, message);
-    };
+    button.dataset.copy = value;
+    button.dataset.copyMessage = message;
     return button;
 }
+
+// One delegated listener instead of a closure per button
+document.addEventListener('click', event => {
+    const button = event.target.closest('.copy-btn');
+    if (!button || button.dataset.copy === undefined) return;
+    event.stopPropagation();
+    copyToClipboard(button.dataset.copy, button.dataset.copyMessage);
+});
 function populateTables() {
     if (!scanData) return;
 
@@ -30,87 +40,91 @@ function populateTables() {
 function populateHostsTable() {
     const hostsTable = document.querySelector('#hosts-table tbody');
     hostsTable.innerHTML = '';
+    hostsTable.parentNode._noMatchRow = null;
 
     if (scanData.hosts.length === 0) {
         renderEmptyTableMessage(hostsTable, 5, 'No hosts with open ports found.');
         return;
     }
 
+    // built off-document, one insertion instead of one per host
+    const fragment = document.createDocumentFragment();
+
     scanData.hosts.slice().sort((a, b) => compareIps(a.ip, b.ip)).forEach(host => {
         const row = document.createElement('tr');
+        row.dataset.ip = host.ip;
 
         const ipCell = document.createElement('td');
         ipCell.className = 'ip-cell';
         ipCell.title = `IP Address: ${host.ip}${host.mac_address ? '\nMAC: ' + host.mac_address : ''}${host.vendor ? '\nVendor: ' + host.vendor : ''}`;
-        
-        const ipContainer = document.createElement('div');
-        ipContainer.className = 'ip-container';
-        
-        const ipText = document.createElement('span');
-        ipText.textContent = host.ip;
-        ipContainer.appendChild(ipText);
-        
-        ipContainer.appendChild(
-            createCopyButton('Copy IP address', host.ip, 'IP address copied!')
-        );
-        
-        ipCell.appendChild(ipContainer);
+        ipCell.append(host.ip, createCopyButton('Copy IP address', host.ip, 'IP address copied!'));
         row.appendChild(ipCell);
 
-        const hostnameCell = document.createElement('td');
-        hostnameCell.textContent = host.hostname || '-';
-        row.appendChild(hostnameCell);
-
-        // Add MAC address cell
-        const macCell = document.createElement('td');
-        macCell.textContent = host.mac_address || '-';
-        row.appendChild(macCell);
-
-        // Add vendor cell
-        const vendorCell = document.createElement('td');
-        vendorCell.textContent = host.vendor || '-';
-        row.appendChild(vendorCell);
+        row.appendChild(textCell(host.hostname || '-'));
+        row.appendChild(textCell(host.mac_address || '-', 'mac-cell'));
+        row.appendChild(textCell(host.vendor || '-'));
 
         const portsCell = document.createElement('td');
         const portsList = document.createElement('ul');
         portsList.className = 'port-list';
 
-        host.ports.sort((a, b) => parseInt(a.port) - parseInt(b.port)).forEach(port => {
+        const searchParts = [host.ip, host.hostname, host.mac_address, host.vendor];
+
+        host.ports.slice().sort((a, b) => parseInt(a.port) - parseInt(b.port)).forEach(port => {
             const portItem = document.createElement('li');
-            let portText = `${port.port}/${port.protocol} (${port.service})`;
+            portItem.className = 'port-item';
+            const label = `${port.port}/${port.protocol} (${port.service})`;
+            portItem.append(label);
+            searchParts.push(label);
 
             if (port.service.includes('?') || port.uncertain) {
-                portText += ' <span class="badge badge-uncertain">?</span>';
+                portItem.appendChild(badge('badge-uncertain', '?'));
             }
-
             if (port.comment.includes('TLS') || port.tls) {
-                portText += ' <span class="badge badge-tls">TLS</span>';
+                portItem.appendChild(badge('badge-tls', 'TLS'));
             }
 
-            // Create detailed tooltip
             let tooltipText = `Port: ${port.port}/${port.protocol}\nService: ${port.service}`;
             if (port.comment) tooltipText += `\nComment: ${port.comment}`;
             if (port.state) tooltipText += `\nState: ${port.state}`;
             if (port.sources && port.sources.length > 0) {
                 tooltipText += `\nDetected by: ${port.sources.map(s => s.type).join(', ')}`;
             }
-
-            portItem.innerHTML = portText;
             portItem.title = tooltipText;
-            portItem.className = 'port-item';
+
             portsList.appendChild(portItem);
         });
 
         portsCell.appendChild(portsList);
         row.appendChild(portsCell);
 
-        hostsTable.appendChild(row);
+        // the filter reads this instead of walking the row on every keystroke
+        row.dataset.search = searchParts.filter(Boolean).join(' ').toLowerCase();
+
+        fragment.appendChild(row);
     });
+
+    hostsTable.appendChild(fragment);
+}
+
+function textCell(text, className) {
+    const cell = document.createElement('td');
+    if (className) cell.className = className;
+    cell.textContent = text;
+    return cell;
+}
+
+function badge(className, text) {
+    const span = document.createElement('span');
+    span.className = `badge ${className}`;
+    span.textContent = text;
+    return span;
 }
 
 function populatePortsTable() {
     const portsTable = document.querySelector('#ports-table tbody');
     portsTable.innerHTML = '';
+    portsTable.parentNode._noMatchRow = null;
 
     if (scanData.hosts.length === 0 || !scanData.hosts.some(host => host.ports.length > 0)) {
         renderEmptyTableMessage(portsTable, 7, 'No open ports found.');
@@ -118,168 +132,177 @@ function populatePortsTable() {
     }
 
     const allPorts = [];
-
     scanData.hosts.forEach(host => {
         host.ports.forEach(port => {
-            allPorts.push({
-                ip: host.ip,
-                hostname: host.hostname,
-                ...port
-            });
+            allPorts.push({ ip: host.ip, hostname: host.hostname, port: port });
         });
     });
 
-    allPorts.sort((a, b) => {
-        const byIp = compareIps(a.ip, b.ip);
-        if (byIp !== 0) return byIp;
-        return parseInt(a.port) - parseInt(b.port);
-    }).forEach(port => {
+    // decorate once: ipSortKey per comparison was most of the sort cost
+    allPorts.forEach(entry => {
+        entry.key = ipSortKey(entry.ip);
+        entry.number = parseInt(entry.port.port, 10);
+    });
+    allPorts.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.number - b.number));
+
+    const fragment = document.createDocumentFragment();
+
+    allPorts.forEach(entry => {
+        const port = entry.port;
         const row = document.createElement('tr');
+
+        const state = effectiveState(entry.ip, port);
+        const comment = effectiveComment(entry.ip, port);
+        const edited = getPortEdit(entry.ip, port) !== null;
 
         const ipCell = document.createElement('td');
         ipCell.className = 'ip-cell';
-        
-        const ipContainer = document.createElement('div');
-        ipContainer.className = 'ip-container';
-        
-        const ipText = document.createElement('span');
-        ipText.textContent = port.ip;
-        ipContainer.appendChild(ipText);
-        
-        ipContainer.appendChild(
-            createCopyButton('Copy IP address', port.ip, 'IP address copied!')
-        );
-        
-        ipCell.appendChild(ipContainer);
+        ipCell.append(entry.ip, createCopyButton('Copy IP address', entry.ip, 'IP address copied!'));
         row.appendChild(ipCell);
 
-        const hostnameCell = document.createElement('td');
-        hostnameCell.textContent = port.hostname || '-';
-        row.appendChild(hostnameCell);
+        row.appendChild(textCell(entry.hostname || '-'));
 
         const portCell = document.createElement('td');
         portCell.className = 'port-cell';
-        
-        const portContainer = document.createElement('div');
-        portContainer.className = 'port-container';
-        
-        const portText = document.createElement('span');
-        portText.textContent = port.port;
-        portContainer.appendChild(portText);
-        
-        portContainer.appendChild(
-            createCopyButton('Copy port number', port.port, 'Port number copied!')
-        );
-        
-        portCell.appendChild(portContainer);
+        portCell.append(port.port, createCopyButton('Copy port number', port.port, 'Port number copied!'));
         row.appendChild(portCell);
 
-        const protocolCell = document.createElement('td');
-        protocolCell.textContent = port.protocol;
-        row.appendChild(protocolCell);
+        row.appendChild(textCell(port.protocol));
 
         const serviceCell = document.createElement('td');
         if (port.service.includes('?') || port.uncertain) {
-            serviceCell.innerHTML = `${port.service.replace('?', '')} <span class="badge badge-uncertain">?</span>`;
+            serviceCell.append(port.service.replace('?', ''), badge('badge-uncertain', '?'));
         } else {
             serviceCell.textContent = port.service;
         }
         row.appendChild(serviceCell);
 
-        // Status and comment are editable; the filters, the sort and the
-        // exports read the row dataset, not these controls.
-        row.dataset.ip = port.ip;
+        row.dataset.ip = entry.ip;
         row.dataset.port = port.port;
         row.dataset.protocol = port.protocol;
         row.dataset.service = port.service;
-        row.dataset.state = effectiveState(port.ip, port);
-        row.dataset.comment = effectiveComment(port.ip, port);
+        row.dataset.state = state;
+        row.dataset.comment = comment;
         row.dataset.tls = (port.tls || (port.comment || '').includes('TLS')) ? '1' : '';
+        row.dataset.search = [entry.ip, entry.hostname, port.port, port.protocol,
+                              port.service, state, comment].filter(Boolean).join(' ').toLowerCase();
 
-        row.appendChild(createStateCell(port));
-        row.appendChild(createCommentCell(port));
+        row.appendChild(createStateCell(state, edited));
+        row.appendChild(createCommentCell(port, comment, edited));
 
-        portsTable.appendChild(row);
+        fragment.appendChild(row);
     });
+
+    portsTable.appendChild(fragment);
 }
 
 const PORT_STATES = ['TBD', 'Done'];
 
-function createStateCell(port) {
+// A button rather than a <select>: the select was four elements per row for two
+// words of text, and its <option> labels leaked into the row text so a search
+// for "done" matched every row.
+function createStateCell(state, edited) {
     const cell = document.createElement('td');
-    const select = document.createElement('select');
-    select.className = 'state-select';
-    select.setAttribute('aria-label', `Status of ${port.ip} port ${port.port}`);
-
-    const current = effectiveState(port.ip, port);
-    const options = PORT_STATES.includes(current) ? PORT_STATES : PORT_STATES.concat(current);
-
-    options.forEach(state => {
-        const option = document.createElement('option');
-        option.value = state;
-        option.textContent = state;
-        select.appendChild(option);
-    });
-    select.value = current;
-
-    select.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
-
-    select.addEventListener('change', () => {
-        setPortEdit(port.ip, port, { state: select.value });
-        const row = cell.closest('tr');
-        if (row) row.dataset.state = select.value;
-        select.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
-        applyUiFilters();
-    });
-
-    cell.appendChild(select);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'state-toggle';
+    button.dataset.stateToggle = '';
+    button.textContent = state;
+    button.title = 'Click to change the status';
+    button.classList.toggle('edited', edited);
+    cell.appendChild(button);
     return cell;
 }
 
-function createCommentCell(port) {
+function nextPortState(current) {
+    const index = PORT_STATES.indexOf(current);
+    if (index === -1) return PORT_STATES[0];
+    return PORT_STATES[(index + 1) % PORT_STATES.length];
+}
+
+function createCommentCell(port, comment, edited) {
     const cell = document.createElement('td');
     cell.className = 'comment-cell';
-    const current = effectiveComment(port.ip, port);
 
     // only badge TLS when the comment does not already say so
-    if (port.tls && !current.includes('TLS')) {
-        const badge = document.createElement('span');
-        badge.className = 'badge badge-tls';
-        badge.textContent = 'TLS';
-        cell.appendChild(badge);
+    if (port.tls && !comment.includes('TLS')) {
+        cell.appendChild(badge('badge-tls', 'TLS'));
     }
 
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'comment-input';
-    input.value = current;
+    input.value = comment;
     input.placeholder = 'note';
-    input.setAttribute('aria-label', `Comment for ${port.ip} port ${port.port}`);
-    input.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
-
-    const commit = () => {
-        setPortEdit(port.ip, port, { comment: input.value });
-        const row = cell.closest('tr');
-        if (row) row.dataset.comment = input.value;
-        input.classList.toggle('edited', getPortEdit(port.ip, port) !== null);
-        applyUiFilters();
-    };
-
-    input.addEventListener('change', commit);
-    input.addEventListener('keydown', event => {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            input.blur();
-        }
-    });
-
+    input.dataset.commentInput = '';
+    input.classList.toggle('edited', edited);
     cell.appendChild(input);
     return cell;
+}
+
+// One set of delegated handlers for the whole table instead of two closures per
+// row, and only the edited row is re-filtered.
+function setupPortsTableEditing() {
+    const table = document.getElementById('ports-table');
+    if (!table) return;
+
+    const portOf = row => {
+        const host = (window.scanData.hosts || []).find(h => h.ip === row.dataset.ip);
+        if (!host) return null;
+        return host.ports.find(
+            p => p.port === row.dataset.port && p.protocol === row.dataset.protocol
+        ) || null;
+    };
+
+    table.addEventListener('click', event => {
+        const button = event.target.closest('[data-state-toggle]');
+        if (!button) return;
+        const row = button.closest('tr');
+        const port = portOf(row);
+        if (!port) return;
+
+        const state = nextPortState(button.textContent.trim());
+        button.textContent = state;
+        setPortEdit(row.dataset.ip, port, { state: state });
+        row.dataset.state = state;
+        refreshRowSearch(row);
+        button.classList.toggle('edited', getPortEdit(row.dataset.ip, port) !== null);
+        refilterRow(table, row);
+    });
+
+    const commit = input => {
+        const row = input.closest('tr');
+        const port = portOf(row);
+        if (!port) return;
+        setPortEdit(row.dataset.ip, port, { comment: input.value });
+        row.dataset.comment = input.value;
+        refreshRowSearch(row);
+        input.classList.toggle('edited', getPortEdit(row.dataset.ip, port) !== null);
+        refilterRow(table, row);
+    };
+
+    table.addEventListener('change', event => {
+        if (event.target.dataset.commentInput !== undefined) commit(event.target);
+    });
+
+    table.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && event.target.dataset.commentInput !== undefined) {
+            event.preventDefault();
+            event.target.blur();
+        }
+    });
+}
+
+function refreshRowSearch(row) {
+    row.dataset.search = [row.dataset.ip, row.children[1].textContent, row.dataset.port,
+                          row.dataset.protocol, row.dataset.service, row.dataset.state,
+                          row.dataset.comment].filter(Boolean).join(' ').toLowerCase();
 }
 
 function populateServicesTable() {
     const servicesTable = document.querySelector('#services-table tbody');
     servicesTable.innerHTML = '';
+    servicesTable.parentNode._noMatchRow = null;
 
     if (scanData.hosts.length === 0 || !scanData.hosts.some(host => host.ports.length > 0)) {
         renderEmptyTableMessage(servicesTable, 3, 'No services found.');
@@ -303,53 +326,58 @@ function populateServicesTable() {
         });
     });
 
+    const fragment = document.createDocumentFragment();
+
     Object.entries(serviceGroups)
         .sort((a, b) => b[1].count - a[1].count)
         .forEach(([service, data]) => {
             const row = document.createElement('tr');
+            const hosts = Array.from(data.hosts).join(', ');
 
-            const serviceCell = document.createElement('td');
-            serviceCell.textContent = service;
-            row.appendChild(serviceCell);
+            row.appendChild(textCell(service));
+            row.appendChild(textCell(String(data.count)));
+            row.appendChild(textCell(hosts));
 
-            const countCell = document.createElement('td');
-            countCell.textContent = data.count;
-            row.appendChild(countCell);
+            row.dataset.service = service;
+            row.dataset.count = String(data.count);
+            row.dataset.search = `${service} ${hosts}`.toLowerCase();
 
-            const hostsCell = document.createElement('td');
-            hostsCell.textContent = Array.from(data.hosts).join(', ');
-            row.appendChild(hostsCell);
-
-            servicesTable.appendChild(row);
+            fragment.appendChild(row);
         });
+
+    servicesTable.appendChild(fragment);
 }
 
 function populateUpHostsTable() {
     const upHostsTable = document.querySelector('#up-hosts-table tbody');
     upHostsTable.innerHTML = '';
+    upHostsTable.parentNode._noMatchRow = null;
 
     if (!scanData.hostsUp || scanData.hostsUp.length === 0) {
         renderEmptyTableMessage(upHostsTable, 2, 'No hosts that are up without open ports.');
         return;
     }
 
-    scanData.hostsUp.sort((a, b) => {
-        const ipA = a.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
-        const ipB = b.ip.split('.').map(num => parseInt(num.padStart(3, '0'))).join('');
-        return ipA.localeCompare(ipB);
-    }).forEach(host => {
-        const row = document.createElement('tr');
+    const fragment = document.createDocumentFragment();
 
-        const ipCell = document.createElement('td');
-        ipCell.textContent = host.ip;
-        row.appendChild(ipCell);
+    // the previous key ran parseInt over zero padded octets, which throws the
+    // padding away again and ordered .100 before .21 before .9
+    scanData.hostsUp
+        .slice()
+        .sort((a, b) => compareIps(a.ip, b.ip))
+        .forEach(host => {
+            const row = document.createElement('tr');
+            row.appendChild(textCell(host.ip, 'ip-cell'));
+            row.appendChild(textCell(host.reason));
 
-        const reasonCell = document.createElement('td');
-        reasonCell.textContent = host.reason;
-        row.appendChild(reasonCell);
+            row.dataset.ip = host.ip;
+            row.dataset.reason = host.reason;
+            row.dataset.search = `${host.ip} ${host.reason}`.toLowerCase();
 
-        upHostsTable.appendChild(row);
-    });
+            fragment.appendChild(row);
+        });
+
+    upHostsTable.appendChild(fragment);
 }
 
 function renderEmptyTableMessage(tableBody, colSpan, message) {

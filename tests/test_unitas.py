@@ -5,6 +5,7 @@ import os
 import shutil
 import socket
 import sys
+import time
 import tempfile
 import re
 import xml.etree.ElementTree as ET
@@ -34,11 +35,66 @@ from unitas.utils import (
     generate_service_urls,
 )
 from unitas.report import build_single_file_report, find_resources_dir
+from unitas.utils import hostup_dict
 
 
 class TestThreadSafeServiceLookup(unittest.TestCase):
     def setUp(self):
         self.service_lookup = ThreadSafeServiceLookup()
+        # These tests drive the resolver fallback, so start with an empty view
+        # of /etc/services (which the lookup normally reads once and caches).
+        self.service_lookup._known = {}
+
+    def test_known_services_are_read_once(self):
+        """The services file replaces one getservbyport call per port"""
+        lookup = ThreadSafeServiceLookup()
+        with patch.object(
+            ThreadSafeServiceLookup,
+            "_load_known_services",
+            return_value={"80tcp": "http", "443tcp": "https"},
+        ) as mock_load:
+            with patch("socket.getservbyport") as mock_getservbyport:
+                self.assertEqual(lookup.get_service_name_for_port("80"), "http")
+                self.assertEqual(lookup.get_service_name_for_port("443"), "https")
+                mock_getservbyport.assert_not_called()
+        self.assertEqual(mock_load.call_count, 1)
+
+    def test_unknown_port_falls_back_to_the_resolver(self):
+        lookup = ThreadSafeServiceLookup()
+        with patch.object(
+            ThreadSafeServiceLookup, "_load_known_services", return_value={}
+        ):
+            with patch("socket.getservbyport", return_value="weird") as mock_lookup:
+                self.assertEqual(lookup.get_service_name_for_port("12345"), "weird")
+                mock_lookup.assert_called_once_with(12345, "tcp")
+
+    def test_services_file_parsing(self):
+        lookup = ThreadSafeServiceLookup()
+        with tempfile.NamedTemporaryFile("w", suffix=".services", delete=False) as f:
+            f.write(
+                "# comment\n"
+                "http\t80/tcp\twww\n"
+                "domain\t53/udp\n"
+                "broken line\n"
+                "http\t80/tcp\t# duplicate, first one wins\n"
+            )
+            path = f.name
+        try:
+            with patch.object(ThreadSafeServiceLookup, "SERVICES_FILE", path):
+                known = lookup._load_known_services()
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(known.get("80tcp"), "http")
+        self.assertEqual(known.get("53udp"), "domain")
+        self.assertNotIn("brokentcp", known)
+
+    def test_missing_services_file_is_not_fatal(self):
+        lookup = ThreadSafeServiceLookup()
+        with patch.object(
+            ThreadSafeServiceLookup, "SERVICES_FILE", "/nonexistent/services"
+        ):
+            self.assertEqual(lookup._load_known_services(), {})
 
     def test_valid_port_lookup(self):
         """Test lookup with a valid port number"""
@@ -118,6 +174,7 @@ class TestThreadSafeServiceLookup(unittest.TestCase):
                 "8080", default_service="custom-service"
             )
             self.assertEqual(result, "custom-service")
+            mock_getservbyport.assert_called_once()
 
 
 class TestNmapParser(unittest.TestCase):
@@ -1359,6 +1416,97 @@ class TestTargetRulesStayInSync(unittest.TestCase):
 
         self.assertEqual(self._js_list("WEB_PORT_HINTS", content), WEB_PORT_HINTS)
         self.assertEqual(self._js_list("TLS_PORT_HINTS", content), TLS_PORT_HINTS)
+
+
+class TestPortIndexPerformance(unittest.TestCase):
+    """add_port_details used to scan the port list per insert, so a host that
+    answers on every port took over a minute to parse."""
+
+    def test_many_ports_on_one_host_are_added_quickly(self):
+        host = HostScanData("10.0.0.1")
+        start = time.perf_counter()
+        for number in range(1, 20001):
+            host.add_port(str(number), "tcp", "TBD", "unknown?")
+        elapsed = time.perf_counter() - start
+
+        self.assertEqual(len(host.ports), 20000)
+        # measured at ~0.05s; the linear scan needed ~6s for the same loop
+        self.assertLess(elapsed, 2.0, f"adding 20k ports took {elapsed:.1f}s")
+
+    def test_duplicate_ports_still_merge(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("80", "tcp", "TBD", "unknown?", source_type="nmap")
+        host.add_port("80", "tcp", "TBD", "http", source_type="nessus")
+        host.add_port("80", "udp", "TBD", "unknown?")
+
+        self.assertEqual(len(host.ports), 2)
+        tcp = next(p for p in host.ports if p.protocol == "tcp")
+        self.assertEqual(tcp.service, "http")
+        self.assertEqual({s["type"] for s in tcp.sources}, {"nmap", "nessus"})
+
+    def test_the_index_follows_a_port_list_assignment(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("80", "tcp")
+        host.add_port("443", "tcp")
+
+        # filter_uncertain_services and merge_states both assign to .ports
+        host.ports = [p for p in host.ports if p.port == "443"]
+        host.add_port("443", "tcp", service="https")
+        host.add_port("80", "tcp")
+
+        self.assertEqual(sorted(p.port for p in host.ports), ["443", "80"])
+
+    def test_from_dict_keeps_the_index_consistent(self):
+        data = {
+            "ip": "10.0.0.1",
+            "hostname": "h",
+            "ports": [
+                {"port": "80", "protocol": "tcp", "state": "TBD", "service": "http"},
+                {"port": "80", "protocol": "tcp", "state": "TBD", "service": "http"},
+            ],
+        }
+        host = HostScanData.from_dict(data)
+        self.assertEqual(len(host.ports), 1)
+        host.add_port("80", "tcp")
+        self.assertEqual(len(host.ports), 1)
+
+
+class TestNmapSweepParsing(unittest.TestCase):
+    """A ping sweep is mostly hosts without ports; they must not each build a
+    HostScanData, and the elements are looked up as direct children."""
+
+    def test_up_hosts_without_ports_are_recorded_not_built(self):
+        hostup_dict.clear()
+        xml = (
+            b'<nmaprun>'
+            b'<host><status state="up" reason="echo-reply"/>'
+            b'<address addr="10.0.0.1" addrtype="ipv4"/></host>'
+            b'<host><status state="down" reason="no-response"/>'
+            b'<address addr="10.0.0.2" addrtype="ipv4"/></host>'
+            b'<host><status state="up" reason="syn-ack"/>'
+            b'<address addr="00:11:22:33:44:55" addrtype="mac" vendor="X"/>'
+            b'<address addr="10.0.0.3" addrtype="ipv4"/>'
+            b'<ports><port protocol="tcp" portid="22"><state state="open"/>'
+            b'<service name="ssh"/></port>'
+            b'<port protocol="tcp" portid="23"><state state="closed"/></port>'
+            b'</ports></host>'
+            b'</nmaprun>'
+        )
+        parser = NmapParser.__new__(NmapParser)
+        parser.file_path = "mem"
+        parser.file_name = "mem.xml"
+        parser.scan_date = ""
+        parser.data = {}
+        parser.root = ET.fromstring(xml)
+
+        result = parser.parse()
+
+        self.assertEqual(list(result), ["10.0.0.3"])
+        self.assertEqual([p.port for p in result["10.0.0.3"].ports], ["22"])
+        self.assertEqual(result["10.0.0.3"].mac_address, "00:11:22:33:44:55")
+        self.assertEqual(hostup_dict.get("10.0.0.1"), "echo-reply")
+        self.assertNotIn("10.0.0.2", hostup_dict)
+        hostup_dict.clear()
 
 
 if __name__ == "__main__":

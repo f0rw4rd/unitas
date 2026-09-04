@@ -5,7 +5,7 @@ import os
 import socket
 import threading
 from ipaddress import ip_address
-from typing import Dict, List
+from typing import Dict, List, Optional
 from manuf2 import manuf
 
 from unitas.model import HostScanData, PortDetails
@@ -48,17 +48,34 @@ class MacVendorLookup:
         return ""
 
 
-def find_nmap_ip_address(host) -> str:
-    """Return the IP of a nmap <host> element, ignoring the MAC address entry."""
-    for addr_type in ("ipv4", "ipv6"):
-        address = host.find(f".//address[@addrtype='{addr_type}']")
-        if address is not None and address.attrib.get("addr"):
-            return address.attrib["addr"]
-    # older/odd scans might not set the addrtype
-    address = host.find(".//address")
-    if address is not None and address.attrib.get("addrtype", "") != "mac":
-        return address.attrib.get("addr", "")
-    return ""
+def find_nmap_ip_address(host_or_addresses) -> str:
+    """Return the IP of a nmap <host>, ignoring the MAC address entry.
+
+    Takes either the <host> element or its already collected <address>
+    children, so a caller that needs the addresses anyway does not pay for a
+    second lookup.
+    """
+    addresses = host_or_addresses
+    if hasattr(host_or_addresses, "findall"):
+        addresses = host_or_addresses.findall("address") or host_or_addresses.findall(
+            ".//address"
+        )
+
+    fallback = ""
+    for address in addresses:
+        addr = address.attrib.get("addr", "")
+        if not addr:
+            continue
+        addr_type = address.attrib.get("addrtype", "")
+        if addr_type == "ipv4":
+            return addr
+        if addr_type == "ipv6" and not fallback:
+            fallback = addr
+        elif not addr_type and not fallback:
+            # older/odd scans might not set the addrtype
+            fallback = addr
+
+    return fallback
 
 
 def get_version() -> str:
@@ -99,32 +116,69 @@ class UnitasConfig:
 
 
 class ThreadSafeServiceLookup:
+    SERVICES_FILE = "/etc/services"
+
     def __init__(self):
         self._lock = threading.Lock()
         self._cache: Dict[str, str] = {}
+        self._known: Optional[Dict[str, str]] = None
+
+    def _load_known_services(self) -> Dict[str, str]:
+        """Read /etc/services once.
+
+        socket.getservbyport() re-reads the file per call (~54us here), which a
+        wide port range pays thousands of times over: 8000 distinct ports cost
+        350ms of syscalls, versus 0.7ms of dict lookups once the file is known.
+        """
+        known: Dict[str, str] = {}
+        try:
+            with open(self.SERVICES_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.split("#", 1)[0].split()
+                    if len(line) < 2 or "/" not in line[1]:
+                        continue
+                    name = line[0]
+                    number, _, proto = line[1].partition("/")
+                    if number.isdigit():
+                        known.setdefault(number + proto, name)
+        except OSError as e:
+            logging.debug("Could not read %s: %s", self.SERVICES_FILE, e)
+        return known
 
     def get_service_name_for_port(
         self, port: str, protocol: str = "tcp", default_service: str = "unknown?"
     ):
-        if PortDetails.is_valid_port(port):
-            cache_id = port + protocol
+        if not PortDetails.is_valid_port(port):
+            raise ValueError(f'Port "{port}" is not valid!')
+
+        cache_id = port + protocol
+        if cache_id in self._cache:
+            return self._cache[cache_id]
+
+        with self._lock:
             if cache_id in self._cache:
                 return self._cache[cache_id]
-            with self._lock:
-                if cache_id in self._cache:
-                    return self._cache[cache_id]
-                try:
-                    service = socket.getservbyport(int(port), protocol)
-                    if service is None:
-                        service = default_service
-                except (socket.error, ValueError, TypeError):
-                    logging.debug(f"Lookup for {port} and {protocol} failed!")
+
+            if self._known is None:
+                self._known = self._load_known_services()
+
+            service = self._known.get(cache_id)
+            if service is None:
+                if self._known:
+                    # the file is the same database getservbyport reads, so a
+                    # miss here is a miss there: no syscall for unknown ports
                     service = default_service
-                service = PortDetails.get_service_name(service, port)
-                self._cache[cache_id] = service
-                return service
-        else:
-            raise ValueError(f'Port "{port}" is not valid!')
+                else:
+                    # the file could not be read, ask the resolver instead
+                    try:
+                        service = socket.getservbyport(int(port), protocol)
+                    except (socket.error, ValueError, TypeError):
+                        logging.debug("Lookup for %s and %s failed!", port, protocol)
+                        service = default_service
+
+            service = PortDetails.get_service_name(service, port)
+            self._cache[cache_id] = service
+            return service
 
 
 service_lookup = ThreadSafeServiceLookup()

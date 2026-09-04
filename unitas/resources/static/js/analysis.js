@@ -1,3 +1,15 @@
+// Hoisted out of the per-port loop it used to be declared in, where it
+// allocated one object and seven arrays for every port in the scan.
+const standardPorts = {
+    'http': [80, 8080],
+    'https': [443, 8443],
+    'ssh': [22],
+    'ftp': [21],
+    'smtp': [25],
+    'dns': [53],
+    'rdp': [3389]
+};
+
 // Network analysis tools
 function runAnalysis() {
     const analysisType = document.getElementById('analysis-type').value;
@@ -113,15 +125,6 @@ function findUnusualPorts() {
             }
 
             // Track non-standard service ports
-            const standardPorts = {
-                'http': [80, 8080],
-                'https': [443, 8443],
-                'ssh': [22],
-                'ftp': [21],
-                'smtp': [25],
-                'dns': [53],
-                'rdp': [3389]
-            };
 
             const service = port.service.replace("?", "");
 

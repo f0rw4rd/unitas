@@ -32,7 +32,18 @@ function loadEdits() {
     return portEdits;
 }
 
+let persistTimer = null;
+
+// Triaging a run of ports would otherwise serialise the whole overlay and hit
+// localStorage synchronously on every keystroke.
 function persistEdits() {
+    updateEditIndicator();
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(writeEdits, 250);
+}
+
+function writeEdits() {
+    clearTimeout(persistTimer);
     if (!portEditsKey) portEditsKey = scanEditsKey();
     try {
         if (Object.keys(portEdits).length === 0) {
@@ -43,8 +54,12 @@ function persistEdits() {
     } catch (error) {
         showError('Could not store the edit: browser storage is unavailable');
     }
-    updateEditIndicator();
 }
+
+window.addEventListener('beforeunload', writeEdits);
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') writeEdits();
+});
 
 function getPortEdit(ip, port) {
     return portEdits[portEditId(ip, port)] || null;
@@ -104,6 +119,7 @@ function updateEditIndicator() {
 // triage done here survives into the next `unitas -u` run.
 function exportStateMarkdown() {
     if (!window.scanData) return;
+    writeEdits();
 
     const withOrigin = Boolean(
         window.scanData.metadata && window.scanData.metadata.includesOrigin

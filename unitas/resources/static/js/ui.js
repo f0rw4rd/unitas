@@ -70,17 +70,17 @@ function activeViewId() {
     return active ? active.id : null;
 }
 
-function isEmptyMessageRow(row) {
-    return row.querySelector('.empty-message') !== null;
-}
-
-// The searchable text of a row: its cells plus the values of the editable
-// controls, which contribute nothing to textContent.
+// The row builders write dataset.search; the fallback is only for rows built
+// elsewhere. Reading row.textContent here instead used to cost three subtree
+// traversals per row on every keystroke, and it swept in the labels of the
+// status <select>, so searching "done" matched every single row.
 function rowSearchText(row) {
-    const values = Array.from(row.querySelectorAll('input, select'))
-        .map(control => control.value)
-        .join(' ');
-    return `${row.textContent} ${values}`.toLowerCase();
+    if (row.dataset.search !== undefined) {
+        return row.dataset.search;
+    }
+    const text = row.textContent.replace(/\s+/g, ' ').trim().toLowerCase();
+    row.dataset.search = text;
+    return text;
 }
 
 function rowMatchesFilters(row, tableSelector) {
@@ -102,7 +102,10 @@ function rowMatchesFilters(row, tableSelector) {
 function updateNoMatchRow(table, visible, total) {
     const body = table.querySelector('tbody');
     if (!body) return;
-    let row = body.querySelector('.no-match-row');
+    // held on the element: querySelector('.no-match-row') is a full scan of the
+    // tbody and the row is appended last
+    let row = table._noMatchRow;
+    if (row && row.parentNode !== body) row = null;
     if (visible === 0 && total > 0) {
         if (!row) {
             row = document.createElement('tr');
@@ -113,6 +116,7 @@ function updateNoMatchRow(table, visible, total) {
             cell.textContent = 'No rows match the current filters.';
             row.appendChild(cell);
             body.appendChild(row);
+            table._noMatchRow = row;
         }
         row.style.display = '';
     } else if (row) {
@@ -127,20 +131,40 @@ function applyUiFilters() {
 
         let visible = 0;
         let total = 0;
-        table.querySelectorAll('tbody tr').forEach(row => {
-            if (row.classList.contains('no-match-row')) return;
-            if (isEmptyMessageRow(row)) return;
+        const selector = UI_VIEWS[viewId].table;
+        const body = table.tBodies[0];
+        const rows = body ? body.rows : [];
+
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            // the placeholder rows are known, no need to probe every subtree
+            if (row === table._noMatchRow || row.dataset.search === undefined) continue;
             total += 1;
-            const show = rowMatchesFilters(row, UI_VIEWS[viewId].table);
-            row.style.display = show ? '' : 'none';
+            const show = rowMatchesFilters(row, selector);
+            const display = show ? '' : 'none';
+            if (row.style.display !== display) row.style.display = display;
             if (show) visible += 1;
-        });
+        }
 
         table.dataset.visibleRows = String(visible);
         table.dataset.totalRows = String(total);
         updateNoMatchRow(table, visible, total);
     });
 
+    updateResultCount();
+}
+
+// Re-evaluating one row after an edit, instead of sweeping every table
+function refilterRow(table, row) {
+    const selector = '#' + table.id;
+    const wasVisible = row.style.display !== 'none';
+    const show = rowMatchesFilters(row, selector);
+    if (show === wasVisible) return;
+
+    row.style.display = show ? '' : 'none';
+    const visible = Number(table.dataset.visibleRows || 0) + (show ? 1 : -1);
+    table.dataset.visibleRows = String(visible);
+    updateNoMatchRow(table, visible, Number(table.dataset.totalRows || 0));
     updateResultCount();
 }
 
@@ -219,36 +243,49 @@ function exportVisibleRowsAsCSV() {
     const table = document.querySelector(view.table);
     if (!table) return;
 
+    // Reading the cells: the port rows carry everything on the row itself, the
+    // other views are read from the DOM. Cloning each cell to strip the buttons
+    // (the previous approach) meant a deep clone per cell.
     const cellText = cell => {
-        // form controls carry their value in .value, not in the text
-        const control = cell.querySelector('input, select');
+        const control = cell.querySelector('input');
         if (control) {
             const badge = cell.querySelector('.badge');
             return [badge ? badge.textContent.trim() : '', control.value]
-                .filter(Boolean)
-                .join(' ')
-                .trim();
+                .filter(Boolean).join(' ').trim();
         }
 
-        const copy = cell.cloneNode(true);
-        copy.querySelectorAll('button').forEach(button => button.remove());
-        const items = copy.querySelectorAll('li');
-        const text = items.length
-            ? Array.from(items).map(li => li.textContent.trim()).join('; ')
-            : copy.textContent;
-        return text.replace(/\s+/g, ' ').trim();
+        const items = cell.querySelectorAll('li');
+        if (items.length) {
+            return Array.from(items).map(li => li.textContent.trim()).join('; ');
+        }
+
+        return cell.textContent.replace(/\s+/g, ' ').trim();
     };
+
+    const portRowCells = row => [
+        row.dataset.ip,
+        row.children[1].textContent.trim(),
+        row.dataset.port,
+        row.dataset.protocol,
+        row.dataset.service,
+        row.dataset.state,
+        row.dataset.comment
+    ];
 
     const headers = Array.from(table.querySelectorAll('thead th'))
         .map(th => cellText(th));
     const lines = [headers.map(quoteCsv).join(',')];
 
-    table.querySelectorAll('tbody tr').forEach(row => {
-        if (row.style.display === 'none') return;
-        if (row.classList.contains('no-match-row') || isEmptyMessageRow(row)) return;
-        const cells = Array.from(row.querySelectorAll('td')).map(cell => quoteCsv(cellText(cell)));
-        lines.push(cells.join(','));
-    });
+    const isPortsTable = viewId === 'ports-view';
+
+    for (const row of table.tBodies[0].rows) {
+        if (row.style.display === 'none') continue;
+        if (row === table._noMatchRow || row.dataset.search === undefined) continue;
+        const values = isPortsTable
+            ? portRowCells(row)
+            : Array.from(row.cells).map(cellText);
+        lines.push(values.map(quoteCsv).join(','));
+    }
 
     const csv = lines.join('\n');
     const filename = `unitas-${viewId.replace('-view', '')}.csv`;

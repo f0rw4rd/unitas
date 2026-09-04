@@ -1,6 +1,6 @@
 from ipaddress import ip_address
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 
 class PortDetails:
@@ -97,18 +97,18 @@ class PortDetails:
             update_service = True
 
         if update_service:
-            logging.debug(f"Updating service from {self.service} -> {other.service}")
+            logging.debug("Updating service from %s -> %s", self.service, other.service)
             self.service = other.service
             updated = True
 
         # update the comments if comment is set
         if not self.comment and other.comment:
-            logging.debug(f"Updating comment from {self.comment} -> {other.comment}")
+            logging.debug("Updating comment from %s -> %s", self.comment, other.comment)
             self.comment = other.comment
             updated = True
 
         if not self.state and other.state:
-            logging.debug(f"Updating state from {self.state} -> {other.state}")
+            logging.debug("Updating state from %s -> %s", self.state, other.state)
             self.state = other.state
             updated = True
 
@@ -179,7 +179,20 @@ class HostScanData:
         self.ip = ip
         self.hostname: str = ""
         self.mac_address: str = ""
-        self.ports: List[PortDetails] = []
+        self._ports: List[PortDetails] = []
+        # (port, protocol) -> PortDetails, so adding a port does not have to
+        # scan the list. A host answering on every port made that quadratic:
+        # 65535 ports took over a minute.
+        self._port_index: Dict[Tuple[str, str], PortDetails] = {}
+
+    @property
+    def ports(self) -> List[PortDetails]:
+        return self._ports
+
+    @ports.setter
+    def ports(self, value: List[PortDetails]) -> None:
+        self._ports = list(value)
+        self._port_index = {(p.port, p.protocol): p for p in self._ports}
 
     def set_mac_address(self, mac_address: str) -> None:
         self.mac_address = mac_address
@@ -197,30 +210,15 @@ class HostScanData:
         if new_port is None:  # skip if new_port is None
             return
 
-        for p in self.ports:
-            if p.port == new_port.port and p.protocol == new_port.protocol:
-                # Preserve sources when updating a port
-                existing_sources = getattr(p, "sources", [])
-                p.update(new_port)
+        key = (new_port.port, new_port.protocol)
+        existing = self._port_index.get(key)
+        if existing is not None:
+            # update() already merges the sources of both ports
+            existing.update(new_port)
+            return
 
-                # Ensure sources attribute exists
-                if not hasattr(p, "sources"):
-                    p.sources = []
-
-                # Merge sources from both ports
-                new_sources = getattr(new_port, "sources", [])
-                for source in new_sources:
-                    if source not in p.sources:
-                        p.sources.append(source)
-
-                # Restore any existing sources that weren't in the new port
-                for source in existing_sources:
-                    if source not in p.sources:
-                        p.sources.append(source)
-                return
-
-        # If the port did not exist, just add it (sources are already included)
-        self.ports.append(new_port)
+        self._port_index[key] = new_port
+        self._ports.append(new_port)
 
     def add_port(
         self,
@@ -266,7 +264,7 @@ class HostScanData:
         if "mac_address" in data:
             host.mac_address = data["mac_address"]
         for port_data in data["ports"]:
-            host.ports.append(PortDetails.from_dict(port_data))
+            host.add_port_details(PortDetails.from_dict(port_data))
         return host
 
 
@@ -276,7 +274,7 @@ def merge_states(
     merged_state = old_state.copy()
     for ip, new_host_data in new_state.items():
         if ip not in merged_state:
-            logging.debug(f"Added host {ip}")
+            logging.debug("Added host %s", ip)
             merged_state[ip] = new_host_data
         else:
             existing_ports = {(p.port, p.protocol): p for p in merged_state[ip].ports}
@@ -286,7 +284,7 @@ def merge_states(
                     if not existing_ports[key] == new_port:
                         existing_ports[key].update(new_port)
                 else:
-                    logging.debug(f"Added port {new_port}")
+                    logging.debug("Added port %s", new_port)
                     existing_ports[key] = new_port
 
             merged_state[ip].ports = list(existing_ports.values())

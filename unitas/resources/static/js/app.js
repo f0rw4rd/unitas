@@ -114,10 +114,14 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    // Search functionality
+    // Search functionality. Debounced: a filter pass walks every row of every
+    // table, and input events are not coalesced, so typing a word used to queue
+    // one full pass per character.
+    let searchTimer = null;
     searchInput.addEventListener('input', function () {
-        const searchTerm = this.value.toLowerCase();
-        filterTables(searchTerm);
+        const searchTerm = this.value;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => filterTables(searchTerm), 120);
     });
 
     // Status filter for ports view
@@ -147,6 +151,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Setup table sorting
     setupTableSorting();
+
+    // Delegated handlers for the editable status and comment cells
+    setupPortsTableEditing();
 });
 
 function setupNetworkEventHandlers() {
@@ -363,77 +370,72 @@ function setupShortcutsPanel() {
 // Setup table sorting functionality
 function setupTableSorting() {
     document.querySelectorAll('th.sortable').forEach(header => {
-        header.addEventListener('click', function() {
+        header.addEventListener('click', function () {
             const table = this.closest('table');
             const tbody = table.querySelector('tbody');
-            const rows = Array.from(tbody.querySelectorAll('tr'));
             const sortField = this.dataset.sort;
-            const currentSort = this.classList.contains('sort-asc') ? 'asc' : 
-                               this.classList.contains('sort-desc') ? 'desc' : null;
-            
+            const currentSort = this.classList.contains('sort-asc') ? 'asc' :
+                this.classList.contains('sort-desc') ? 'desc' : null;
+
             // Remove sort classes from all headers in this table
             table.querySelectorAll('th.sortable').forEach(h => {
                 h.classList.remove('sort-asc', 'sort-desc');
             });
-            
-            // Determine new sort direction
-            let newSort = 'asc';
-            if (currentSort === 'asc') {
-                newSort = 'desc';
-            }
-            
-            // Add sort class to current header
+
+            const newSort = currentSort === 'asc' ? 'desc' : 'asc';
             this.classList.add(newSort === 'asc' ? 'sort-asc' : 'sort-desc');
-            
-            // Sort rows
-            rows.sort((a, b) => {
-                let aVal = getSortValue(a, sortField);
-                let bVal = getSortValue(b, sortField);
-                
-                // Handle different data types
-                if (sortField === 'port' || sortField === 'count') {
-                    aVal = parseInt(aVal) || 0;
-                    bVal = parseInt(bVal) || 0;
-                } else if (sortField === 'ip') {
-                    aVal = ipSortKey(aVal);
-                    bVal = ipSortKey(bVal);
+
+            // Decorate once, then sort primitives. Reading the cells inside the
+            // comparator meant a querySelectorAll, a closest() and a textContent
+            // per comparison, i.e. O(n log n) DOM queries for one click.
+            const numeric = sortField === 'port' || sortField === 'count';
+            const isIp = sortField === 'ip';
+            const rows = [];
+            for (const row of tbody.rows) {
+                if (row === table._noMatchRow || row.querySelector('.empty-message')) continue;
+                let key = getSortValue(row, sortField);
+                if (numeric) {
+                    key = parseInt(key, 10) || 0;
+                } else if (isIp) {
+                    key = ipSortKey(key);
                 } else {
-                    aVal = aVal.toLowerCase();
-                    bVal = bVal.toLowerCase();
+                    key = key.toLowerCase();
                 }
-                
-                if (aVal < bVal) return newSort === 'asc' ? -1 : 1;
-                if (aVal > bVal) return newSort === 'asc' ? 1 : -1;
-                return 0;
-            });
-            
-            // Re-append sorted rows
-            rows.forEach(row => tbody.appendChild(row));
+                rows.push({ row, key });
+            }
+
+            const direction = newSort === 'asc' ? 1 : -1;
+            rows.sort((a, b) => (a.key < b.key ? -direction : a.key > b.key ? direction : 0));
+
+            // detach while re-ordering: moving rows inside a live table makes
+            // the engine re-check the layout of the whole table each time
+            const placeholder = document.createComment('sorting');
+            tbody.replaceWith(placeholder);
+            const fragment = document.createDocumentFragment();
+            rows.forEach(entry => fragment.appendChild(entry.row));
+            tbody.appendChild(fragment);
+            placeholder.replaceWith(tbody);
         });
     });
 }
 
+const SORT_FIELDS = {
+    'hosts-table': { ip: 0, hostname: 1, mac: 2, vendor: 3, ports: 4 },
+    'ports-table': { ip: 0, hostname: 1, port: 2, protocol: 3, service: 4 },
+    'services-table': { service: 0, count: 1, hosts: 2 },
+    'up-hosts-table': { ip: 0, reason: 1 }
+};
+
 // Get sort value from table row
 function getSortValue(row, field) {
-    const cells = row.querySelectorAll('td');
-    const tableId = row.closest('table').id;
-    
-    switch(tableId) {
-        case 'hosts-table':
-            const hostsFieldMap = { ip: 0, hostname: 1, mac: 2, vendor: 3, ports: 4 };
-            return cells[hostsFieldMap[field]]?.textContent.trim() || '';
-        case 'ports-table':
-            // status and comment are form controls, their value is on the row
-            if (field === 'status') return row.dataset.state || '';
-            if (field === 'comment') return row.dataset.comment || '';
-            const portsFieldMap = { ip: 0, hostname: 1, port: 2, protocol: 3, service: 4 };
-            return cells[portsFieldMap[field]]?.textContent.trim() || '';
-        case 'services-table':
-            const servicesFieldMap = { service: 0, count: 1, hosts: 2 };
-            return cells[servicesFieldMap[field]]?.textContent.trim() || '';
-        default:
-            return '';
-    }
+    // the ports table keeps everything sortable on the row itself
+    if (row.dataset[field] !== undefined) return row.dataset[field];
+    if (field === 'status') return row.dataset.state || '';
+
+    const fields = SORT_FIELDS[row.parentNode.parentNode.id];
+    if (!fields || fields[field] === undefined) return '';
+    const cell = row.cells[fields[field]];
+    return cell ? cell.textContent.trim() : '';
 }
 
 // Comparable sort key for an address. `<<` would overflow into negative

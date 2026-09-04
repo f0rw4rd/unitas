@@ -34,6 +34,9 @@ function renderGraph() {
             network = null;
         }
 
+        highlightedNodes = [];
+        highlightedEdges = [];
+
         // Process subnets for the network graph
         processSubnets();
 
@@ -100,6 +103,7 @@ function createGraphData() {
     // would be thrown away by the rebuild.
     const filters = getGraphFilters();
     const counts = { hosts: 0, totalHosts: 0, ports: 0, totalPorts: 0 };
+    const serviceCounts = countServices(window.scanData.hosts, filters);
 
     // Process hosts
     window.scanData.hosts.forEach((host) => {
@@ -156,7 +160,7 @@ function createGraphData() {
                 servicesMap.set(serviceName, serviceId);
 
                 // Count total instances of this service
-                const serviceInstances = countServiceInstances(serviceName);
+                const serviceInstances = countServiceInstances(serviceCounts, serviceName);
 
                 nodes.push({
                     id: serviceId,
@@ -482,16 +486,24 @@ function hideTooltip() {
 }
 
 // Graph utility functions
-function countServiceInstances(serviceName) {
-    let count = 0;
-    window.scanData.hosts.forEach(host => {
+// One pass over the ports instead of one pass per distinct service: this used
+// to be O(services x ports) per graph render, and it counted the unfiltered
+// data, so the tooltip disagreed with a filtered graph.
+function countServiceInstances(counts, serviceName) {
+    return counts.get(serviceName) || 0;
+}
+
+function countServices(hosts, filters) {
+    const counts = new Map();
+    hosts.forEach(host => {
+        if (filters && !hostMatchesFilters(host, filters)) return;
         host.ports.forEach(port => {
-            if (port.service.replace("?", "") === serviceName) {
-                count++;
-            }
+            if (filters && !portMatchesFilters(port, filters)) return;
+            const name = port.service.replace("?", "");
+            counts.set(name, (counts.get(name) || 0) + 1);
         });
     });
-    return count;
+    return counts;
 }
 
 function getConnectedHosts(serviceId) {
@@ -540,80 +552,87 @@ function formatEdgeTooltip(ports) {
     return tooltip;
 }
 
+// Only the previously highlighted ids are reset and every change goes out as
+// one batched update; resetting both whole datasets per click meant O(nodes +
+// edges) allocations and dataset writes every time a node was selected.
+let highlightedNodes = [];
+let highlightedEdges = [];
+
+// A batched node update has to carry the node's value: vis recomputes the
+// scaling range over the updated entries and throws without it.
+function nodeUpdate(id, properties) {
+    const node = nodesDataset.get(id);
+    if (!node) return null;
+    return Object.assign({ id: id, value: node.value }, properties);
+}
+
+function clearHighlight() {
+    // ids from a previous graph must never be pushed into a rebuilt dataset:
+    // vis would treat them as new nodes without a value and throw
+    const nodeResets = highlightedNodes
+        // null, not undefined: vis 10 throws on an undefined colour inside a
+        // batched update, null puts the node back on its group default
+        .map(id => nodesDataset && nodeUpdate(id, { color: null, font: null }))
+        .filter(Boolean);
+    const edgeResets = highlightedEdges
+        .filter(edge => edgesDataset && edgesDataset.get(edge.id))
+        .map(edge => ({ id: edge.id, color: null, width: edge.width }));
+
+    if (nodeResets.length) nodesDataset.update(nodeResets);
+    if (edgeResets.length) edgesDataset.update(edgeResets);
+
+    highlightedNodes = [];
+    highlightedEdges = [];
+}
+
 function highlightConnections(nodeId) {
-    // Reset all nodes and edges to default appearance
-    nodesDataset.update(nodesDataset.get().map(node => ({
-        id: node.id,
-        color: undefined,
-        font: undefined
-    })));
+    clearHighlight();
 
-    edgesDataset.update(edgesDataset.get().map(edge => ({
-        id: edge.id,
-        color: undefined,
-        width: edge.originalWidth || edge.width
-    })));
-
-    // Get the selected node
     const node = nodesDataset.get(nodeId);
-    const connectedNodes = new Set();
-    const connectedEdges = new Set();
+    if (!node) return;
 
-    if (node.type === "host") {
-        // Find all edges from this host
-        edgesDataset.get({
-            filter: edge => edge.from === nodeId
-        }).forEach(edge => {
-            connectedNodes.add(edge.to);
-            connectedEdges.add(edge.id);
-        });
-    } else if (node.type === "service") {
-        // Find all edges to this service
-        edgesDataset.get({
-            filter: edge => edge.to === nodeId
-        }).forEach(edge => {
-            connectedNodes.add(edge.from);
-            connectedEdges.add(edge.id);
+    const connectedNodes = new Set();
+    const connectedEdges = [];
+
+    const matches = node.type === "host"
+        ? edge => edge.from === nodeId
+        : node.type === "service"
+            ? edge => edge.to === nodeId
+            : null;
+
+    if (matches) {
+        edgesDataset.get({ filter: matches }).forEach(edge => {
+            connectedNodes.add(node.type === "host" ? edge.to : edge.from);
+            connectedEdges.push(edge);
         });
     }
 
-    // Highlight the selected node
-    nodesDataset.update({
-        id: nodeId,
-        color: {
-            border: "#8e44ad",
-            background: "#9b59b6"
-        },
-        font: {
-            color: "#000000",
-            bold: true
-        }
-    });
+    const nodeUpdates = [
+        nodeUpdate(nodeId, {
+            color: { border: "#8e44ad", background: "#9b59b6" },
+            font: { color: "#000000", bold: true }
+        })
+    ].filter(Boolean);
 
-    // Highlight connected nodes
     connectedNodes.forEach(id => {
-        nodesDataset.update({
-            id: id,
-            color: {
-                border: "#16a085",
-                background: "#1abc9c"
-            },
-            font: {
-                bold: true
-            }
+        const update = nodeUpdate(id, {
+            color: { border: "#16a085", background: "#1abc9c" },
+            font: { bold: true }
         });
+        if (update) nodeUpdates.push(update);
     });
 
-    // Highlight connected edges
-    connectedEdges.forEach(id => {
-        const edge = edgesDataset.get(id);
-        edgesDataset.update({
-            id: id,
-            color: "#16a085",
-            width: 2 * (edge.width || 1),
-            originalWidth: edge.width || 1
-        });
-    });
+    const edgeUpdates = connectedEdges.map(edge => ({
+        id: edge.id,
+        color: "#16a085",
+        width: 2 * (edge.width || 1)
+    }));
+
+    if (nodeUpdates.length) nodesDataset.update(nodeUpdates);
+    if (edgeUpdates.length) edgesDataset.update(edgeUpdates);
+
+    highlightedNodes = nodeUpdates.map(update => update.id);
+    highlightedEdges = connectedEdges.map(edge => ({ id: edge.id, width: edge.width }));
 }
 
 // Minimap functions
