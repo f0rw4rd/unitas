@@ -366,7 +366,9 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "opsec-cvp?",
-                "sources": [],
+                "sources": [
+                    {"date": "", "file": "nessus-sample-1.nessus", "type": "nessus"}
+                ],
                 "comment": "",
             },
         )
@@ -383,7 +385,9 @@ class TestNessusParser(unittest.TestCase):
                 "protocol": "tcp",
                 "state": "TBD",
                 "service": "rdp?",
-                "sources": [],
+                "sources": [
+                    {"date": "", "file": "nessus-sample-1.nessus", "type": "nessus"}
+                ],
                 "comment": "",
             },
         )
