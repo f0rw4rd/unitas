@@ -4,12 +4,14 @@ import glob
 import logging
 import os
 import shutil
+import subprocess
 from typing import Dict, List
 from xml.etree.ElementTree import ParseError
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError, Element
 
 from .exporter import NessusExporter
+from .utils import find_nmap_ip_address
 
 
 class ScanMerger(ABC):
@@ -29,7 +31,7 @@ class ScanMerger(ABC):
                 continue
 
             # Skip output directory files
-            if os.path.abspath(self.output_directory) in os.path.abspath(file):
+            if self._is_in_output_directory(file):
                 logging.warning(
                     f"Skipping file {file} to prevent merging a merged scan!"
                 )
@@ -37,6 +39,14 @@ class ScanMerger(ABC):
                 files.append(file)
 
         return files
+
+    def _is_in_output_directory(self, file: str) -> bool:
+        output_dir = os.path.abspath(self.output_directory)
+        file_path = os.path.abspath(file)
+        try:
+            return os.path.commonpath([output_dir, file_path]) == output_dir
+        except ValueError:  # different drives on windows
+            return False
 
     def parse(self):
         pass
@@ -67,7 +77,7 @@ class NmapHost:
         return all(self.elements_equal(c1, c2) for c1, c2 in zip(e1, e2))
 
     def find_port(self, protocol: str, portid: str) -> Element:
-        for p in self.ports:
+        for p in self.ports.values():
             if p.get("protocol") == protocol and p.get("portid") == portid:
                 return p
         return None
@@ -182,9 +192,8 @@ class NmapMerger(ScanMerger):
                 for host in root.findall(".//host"):
                     status = host.find(".//status")
                     if status is not None and status.attrib.get("state") == "up":
-                        address = host.find(".//address")
-                        if address is not None:  # explicit None check is needed
-                            host_ip: str = address.attrib.get("addr", "")
+                        host_ip: str = find_nmap_ip_address(host)
+                        if host_ip:
                             if not host_ip in hosts:
                                 nhost = NmapHost(host_ip, host)
                                 hosts[host_ip] = nhost
@@ -213,13 +222,16 @@ class NmapMerger(ScanMerger):
 
                             hostnames = host.find("hostnames")
                             if hostnames is not None:
-                                for x in hostnames:
+                                for x in list(hostnames):
                                     hostnames.remove(x)
                                     nhost.add_hostname(x)
 
+                            # the scripts are stored inside a <hostscript> element,
+                            # add_hostscript expects the single <script> elements
                             for x in host.findall(".//hostscript"):
                                 host.remove(x)
-                                nhost.add_hostscript(x)
+                                for script in x.findall("script"):
+                                    nhost.add_hostscript(script)
 
                             os_e = host.find(".//os")
                             if os_e is not None:
@@ -248,24 +260,24 @@ class NmapMerger(ScanMerger):
 
             # if the first scan had no ports, we need to add the element again
             if ports is None:
-
-                ports = ET.fromstring("<ports></ports>")
-                host.append(ports)
+                ports = ET.SubElement(host, "ports")
 
             for _, p in nhost.ports.items():
                 ports.append(p)
-            # clear all child elements
-            # add all of them
-            hostnames = host.find("hostnames")
-            for p in nhost.hostnames:
-                hostnames.append(p)
 
-            hostscripts = host.find("hostscripts")
-            if not hostscripts:
-                hostscripts = ET.fromstring("<hostscripts></hostscripts>")
-                host.append(hostscripts)
-            for _, p in nhost.hostscripts.items():
-                hostscripts.append(p)
+            if nhost.hostnames:
+                hostnames = host.find("hostnames")
+                if hostnames is None:
+                    hostnames = ET.SubElement(host, "hostnames")
+                for p in nhost.hostnames:
+                    hostnames.append(p)
+
+            if nhost.hostscripts:
+                hostscript = host.find("hostscript")
+                if hostscript is None:
+                    hostscript = ET.SubElement(host, "hostscript")
+                for _, p in nhost.hostscripts.items():
+                    hostscript.append(p)
 
             payload += ET.tostring(host).decode()
         data = self.template.replace("{{host}}", payload)
@@ -284,7 +296,10 @@ class NmapMerger(ScanMerger):
                 "xsltproc is not installed and nmap html report will not generated!"
             )
         else:
-            os.system(f"xsltproc {output_file} -o {output_file}.html")
+            subprocess.run(
+                ["xsltproc", output_file, "-o", f"{output_file}.html"],
+                check=False,
+            )
 
         return output_file
 
@@ -326,7 +341,7 @@ class NessusMerger(ScanMerger):
             existing_host = self.report.find(
                 f".//ReportHost[@name='{host.attrib['name']}']"
             )
-            if not existing_host:
+            if existing_host is None:
                 logging.debug(f"Adding host: {host.attrib['name']}")
                 self.report.append(host)
             else:
@@ -334,8 +349,11 @@ class NessusMerger(ScanMerger):
 
     def _merge_report_items(self, host, existing_host):
         for item in host.findall("ReportItem"):
-            if not existing_host.find(
-                f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"
+            if (
+                existing_host.find(
+                    f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"
+                )
+                is None
             ):
                 logging.debug(
                     f"Adding finding: {item.attrib['port']}:{item.attrib['pluginID']}"

@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 import concurrent.futures
 
-from unitas.utils import service_lookup, hostup_dict
+from unitas.utils import service_lookup, hostup_dict, find_nmap_ip_address
 from unitas.model import HostScanData, PortDetails, merge_states
 
 
@@ -112,10 +112,10 @@ class NessusParser(ScanParser):
                     f"Found MAC address in Nessus scan for {ip}: {mac_address}"
                 )
 
-            plugin_found = (
-                self._parse_service_detection(block, host) > 0
-                or self._parse_port_scanners(block, host) > 0
-            )
+            # both need to run, "or" would skip the port scanner plugins
+            service_items = self._parse_service_detection(block, host)
+            port_items = self._parse_port_scanners(block, host)
+            plugin_found = service_items > 0 or port_items > 0
 
             if plugin_found and len(host.ports) == 0:
                 if not ip in hostup_dict:
@@ -194,8 +194,8 @@ class NessusParser(ScanParser):
         for item in [
             b
             for b in block.findall(".//ReportItem")
-            if b.attrib.get("pluginFamily", "Port Scanner")
-            not in ["Port Scanner", "Settings"]
+            if b.attrib.get("pluginFamily", "Port scanners").lower()
+            not in ["port scanners", "settings"]
         ]:
             counter += 1
             host.add_port_details(self._parse_service_item(item))
@@ -222,9 +222,8 @@ class NmapParser(ScanParser):
         for host in self.root.findall(".//host"):
             status = host.find(".//status")
             if status is not None and status.attrib.get("state") == "up":
-                address = host.find(".//address")
-                if address is not None:  # explicit None check is needed
-                    host_ip: str = address.attrib.get("addr", "")
+                host_ip: str = find_nmap_ip_address(host)
+                if host_ip:
                     h = HostScanData(ip=host_ip)
 
                     # Extract MAC address if available

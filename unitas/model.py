@@ -121,7 +121,7 @@ class PortDetails:
         try:
             port_num = int(port)
             return 1 <= port_num <= 65535
-        except ValueError:
+        except (ValueError, TypeError):
             return False
 
     SERVICE_MAPPING: Dict[str, str] = {

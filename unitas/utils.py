@@ -47,6 +47,19 @@ class MacVendorLookup:
         return ""
 
 
+def find_nmap_ip_address(host) -> str:
+    """Return the IP of a nmap <host> element, ignoring the MAC address entry."""
+    for addr_type in ("ipv4", "ipv6"):
+        address = host.find(f".//address[@addrtype='{addr_type}']")
+        if address is not None and address.attrib.get("addr"):
+            return address.attrib["addr"]
+    # older/odd scans might not set the addrtype
+    address = host.find(".//address")
+    if address is not None and address.attrib.get("addrtype", "") != "mac":
+        return address.attrib.get("addr", "")
+    return ""
+
+
 def get_version() -> str:
     return __version__
 
@@ -75,13 +88,13 @@ class UnitasConfig:
         )
 
     def get_secret_key(self):
-        return self.config.get("nessus", "secret_key")
+        return self.config.get("nessus", "secret_key", fallback="")
 
     def get_access_key(self):
-        return self.config.get("nessus", "access_key")
+        return self.config.get("nessus", "access_key", fallback="")
 
     def get_url(self):
-        return self.config.get("nessus", "url")
+        return self.config.get("nessus", "url", fallback="https://127.0.0.1:8834")
 
 
 class ThreadSafeServiceLookup:
@@ -139,16 +152,16 @@ def search_port_or_service(
                     if with_url:
                         url = service + "://" + url
 
-                    if port == 139:
-                        pass
-
                     # show ports if the port is not the default port for the service
                     # if multiple terms are used, do not do this e.g. http and https, which leads to the same host without any context which is which
                     if hide_ports:
                         pass  # no need to do anything
 
                     elif (
-                        not service_lookup.get_service_name_for_port(port_nr) == service
+                        not service_lookup.get_service_name_for_port(
+                            port_nr, port.protocol
+                        )
+                        == service
                         or len(search_terms) > 1
                     ):
                         url += ":" + port_nr
