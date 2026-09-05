@@ -150,10 +150,15 @@ hostname containing it: `service:smb`, `port:445`, `state:tbd`, `net:10.31.112.`
 bare word) negates it. Clauses combine with AND, and a bare word still matches the whole
 row.
 
+"Group by" turns the Ports view into a worklist: each service or subnet gets a header with
+its own progress ("smb - 14 ports, 7 hosts, 3 done") and collapses once it is finished.
+The counts follow the triage and the filters, and sorting a column sorts inside each group
+rather than scattering them.
+
 The keyboard triages the Ports and Hosts views without the mouse: `j`/`k` move the cursor,
 `x` selects the row (`Shift` extends the range), `d`/`p`/`u` mark Done / In progress / TBD
 -- the selection when there is one, otherwise the row under the cursor -- and `n` jumps
-into the note.
+into the note, and `g` cycles the grouping.
 
 "Copy Visible" copies whatever the current search and status filters leave on screen as
 web URLs, `service://host:port` URLs, `ip:port` pairs, bare IPs, or an nmap re-scan

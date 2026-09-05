@@ -310,6 +310,12 @@ function setupTriageKeyboard() {
             return;
         }
 
+        if (event.key === 'g' && typeof cycleGroupMode === 'function') {
+            event.preventDefault();
+            cycleGroupMode();
+            return;
+        }
+
         if (TRIAGE_KEYS[event.key]) {
             event.preventDefault();
             applyKeyboardState(table, TRIAGE_KEYS[event.key]);

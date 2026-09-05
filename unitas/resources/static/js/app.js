@@ -392,7 +392,8 @@ function setupTableSorting() {
             const isIp = sortField === 'ip';
             const rows = [];
             for (const row of tbody.rows) {
-                if (row === table._noMatchRow || row.querySelector('.empty-message')) continue;
+                if (row === table._noMatchRow || row.classList.contains('group-row')) continue;
+                if (row.querySelector('.empty-message')) continue;
                 let key = getSortValue(row, sortField);
                 if (numeric) {
                     key = parseInt(key, 10) || 0;
@@ -405,7 +406,35 @@ function setupTableSorting() {
             }
 
             const direction = newSort === 'asc' ? 1 : -1;
-            rows.sort((a, b) => (a.key < b.key ? -direction : a.key > b.key ? direction : 0));
+            const compare = (a, b) => (a.key < b.key ? -direction : a.key > b.key ? direction : 0);
+
+            // While grouped, a global sort would scatter the rows across their
+            // headers; each group is sorted inside itself instead.
+            const grouped = typeof groupingActive === 'function' && groupingActive();
+            if (grouped) {
+                const byGroup = new Map();
+                rows.forEach(entry => {
+                    const key = entry.row.dataset.group || '';
+                    if (!byGroup.has(key)) byGroup.set(key, []);
+                    byGroup.get(key).push(entry);
+                });
+                byGroup.forEach(members => members.sort(compare));
+
+                const placeholder = document.createComment('sorting');
+                tbody.replaceWith(placeholder);
+                for (const header of tbody.querySelectorAll('tr.group-row')) {
+                    const members = byGroup.get(header.dataset.groupHeader) || [];
+                    let previous = header;
+                    members.forEach(entry => {
+                        previous.after(entry.row);
+                        previous = entry.row;
+                    });
+                }
+                placeholder.replaceWith(tbody);
+                return;
+            }
+
+            rows.sort(compare);
 
             // detach while re-ordering: moving rows inside a live table makes
             // the engine re-check the layout of the whole table each time

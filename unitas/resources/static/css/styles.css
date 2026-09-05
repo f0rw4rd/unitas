@@ -673,6 +673,79 @@ tr.row-cursor>td:first-child {
     margin-left: auto;
 }
 
+/* Grouped worklist */
+.group-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-left: auto;
+}
+
+.group-select select {
+    font-size: 0.85rem;
+}
+
+tr.group-row>td {
+    padding: 0;
+    background-color: var(--surface-2);
+    border-top: 1px solid var(--border-strong);
+}
+
+.group-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 0.45rem 0.75rem;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.group-toggle:hover {
+    background-color: var(--surface);
+}
+
+.group-caret {
+    width: 0.8rem;
+    color: var(--text-muted);
+}
+
+.group-name {
+    font-weight: 600;
+}
+
+.group-counts {
+    color: var(--text-muted);
+}
+
+.group-progress {
+    flex: 0 0 90px;
+    height: 5px;
+    margin-left: auto;
+    border-radius: 3px;
+    background-color: var(--border-strong);
+    overflow: hidden;
+}
+
+.group-progress-bar {
+    display: block;
+    height: 100%;
+    width: 0;
+    background-color: var(--accent);
+    transition: width 0.2s ease;
+}
+
+tr.group-complete .group-progress-bar {
+    background-color: var(--success);
+}
+
 /* Editable status and comment cells */
 .state-toggle,
 .comment-input {

@@ -134,6 +134,7 @@
                         <div class="shortcut-item"><kbd>x</kbd> - Select the row (<kbd>Shift</kbd> extends)</div>
                         <div class="shortcut-item"><kbd>d</kbd> / <kbd>p</kbd> / <kbd>u</kbd> - Mark Done / In progress / TBD</div>
                         <div class="shortcut-item"><kbd>n</kbd> - Edit the note</div>
+                        <div class="shortcut-item"><kbd>g</kbd> - Group by nothing / service / subnet</div>
                         <div class="shortcut-item">Search: <code>service:</code> <code>port:</code>
                             <code>state:</code> <code>net:</code> <code>comment:</code>, <code>-</code> negates</div>
                     </div>
@@ -192,6 +193,13 @@
                         <button class="status-btn" data-status="tbd">TBD</button>
                         <button class="status-btn" data-status="in progress">In progress</button>
                         <button class="status-btn" data-status="done">Done</button>
+                        <label class="group-select">Group by
+                            <select id="group-by" class="filter-select">
+                                <option value="none">nothing</option>
+                                <option value="service">service</option>
+                                <option value="subnet">subnet</option>
+                            </select>
+                        </label>
                     </div>
                     <div id="ports-batch" class="batch-bar hidden">
                         <span id="ports-batch-count" class="batch-count"></span>
@@ -430,6 +438,7 @@
     <script src="static/js/filters.js"></script>
     <script src="static/js/analysis.js"></script>
     <script src="static/js/selection.js"></script>
+    <script src="static/js/grouping.js"></script>
     <script src="static/js/app.js"></script>
     <script src="static/js/workspace.js"></script>
 </body>

@@ -235,7 +235,11 @@ function applyUiFilters() {
             if (row === table._noMatchRow || row.dataset.search === undefined) continue;
             total += 1;
             const show = rowMatchesFilters(row, selector);
-            const display = show ? '' : 'none';
+            // a collapsed group hides its rows without pretending they were
+            // filtered out; the group header still counts them
+            row.dataset.filterMatch = show ? '1' : '';
+            const onScreen = show && !(typeof rowIsCollapsed === 'function' && rowIsCollapsed(row));
+            const display = onScreen ? '' : 'none';
             if (row.style.display !== display) row.style.display = display;
             if (show) visible += 1;
         }
@@ -243,6 +247,7 @@ function applyUiFilters() {
         table.dataset.visibleRows = String(visible);
         table.dataset.totalRows = String(total);
         updateNoMatchRow(table, visible, total);
+        if (typeof updateGroupHeaders === 'function') updateGroupHeaders(table);
     });
 
     updateResultCount();
@@ -254,6 +259,9 @@ function refilterRow(table, row) {
     const selector = '#' + table.id;
     const wasVisible = row.style.display !== 'none';
     const show = rowMatchesFilters(row, selector);
+    row.dataset.filterMatch = show ? '1' : '';
+    // the group header counts this row even when it is off screen
+    if (typeof updateGroupHeaders === 'function') updateGroupHeaders(table);
     if (show === wasVisible) return;
 
     row.style.display = show ? '' : 'none';

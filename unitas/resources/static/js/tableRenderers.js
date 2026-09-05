@@ -36,7 +36,8 @@ function populateTables() {
     populateServicesTable();
     populateUpHostsTable();
 
-    // the rows the selection pointed at are gone
+    // the rows the selection and the groups pointed at are gone
+    if (typeof applyGrouping === 'function') applyGrouping();
     if (typeof refreshSelections === 'function') refreshSelections();
 }
 
