@@ -169,6 +169,7 @@ function applyUiFilters() {
     });
 
     updateResultCount();
+    if (typeof refreshSelections === 'function') refreshSelections();
 }
 
 // Re-evaluating one row after an edit, instead of sweeping every table
@@ -183,6 +184,7 @@ function refilterRow(table, row) {
     table.dataset.visibleRows = String(visible);
     updateNoMatchRow(table, visible, Number(table.dataset.totalRows || 0));
     updateResultCount();
+    if (!show && typeof refreshSelections === 'function') refreshSelections();
 }
 
 function updateResultCount() {
@@ -281,7 +283,7 @@ function exportVisibleRowsAsCSV() {
 
     const portRowCells = row => [
         row.dataset.ip,
-        row.children[1].textContent.trim(),
+        row.dataset.hostname || '',
         row.dataset.port,
         row.dataset.protocol,
         row.dataset.service,
@@ -289,7 +291,9 @@ function exportVisibleRowsAsCSV() {
         row.dataset.comment
     ];
 
+    // the selection column is a control, not data
     const headers = Array.from(table.querySelectorAll('thead th'))
+        .filter(th => !th.classList.contains('select-col'))
         .map(th => cellText(th));
     const lines = [headers.map(quoteCsv).join(',')];
 
@@ -300,7 +304,9 @@ function exportVisibleRowsAsCSV() {
         if (row === table._noMatchRow || row.dataset.search === undefined) continue;
         const values = isPortsTable
             ? portRowCells(row)
-            : Array.from(row.cells).map(cellText);
+            : Array.from(row.cells)
+                .filter(cell => !cell.classList.contains('select-col'))
+                .map(cellText);
         lines.push(values.map(quoteCsv).join(','));
     }
 

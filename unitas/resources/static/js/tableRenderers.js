@@ -35,6 +35,9 @@ function populateTables() {
     populatePortsTable();
     populateServicesTable();
     populateUpHostsTable();
+
+    // the rows the selection pointed at are gone
+    if (typeof refreshSelections === 'function') refreshSelections();
 }
 
 function populateHostsTable() {
@@ -43,7 +46,7 @@ function populateHostsTable() {
     hostsTable.parentNode._noMatchRow = null;
 
     if (scanData.hosts.length === 0) {
-        renderEmptyTableMessage(hostsTable, 5, 'No hosts with open ports found.');
+        renderEmptyTableMessage(hostsTable, 6, 'No hosts with open ports found.');
         return;
     }
 
@@ -53,6 +56,7 @@ function populateHostsTable() {
     scanData.hosts.slice().sort((a, b) => compareIps(a.ip, b.ip)).forEach(host => {
         const row = document.createElement('tr');
         row.dataset.ip = host.ip;
+        row.appendChild(selectCell());
 
         const ipCell = document.createElement('td');
         ipCell.className = 'ip-cell';
@@ -107,6 +111,19 @@ function populateHostsTable() {
     hostsTable.appendChild(fragment);
 }
 
+// The first cell of the triage tables: a checkbox the selection code reads,
+// kept out of the row's search text and out of the CSV.
+function selectCell() {
+    const cell = document.createElement('td');
+    cell.className = 'select-col';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.dataset.selectRow = '';
+    box.setAttribute('aria-label', 'Select this row');
+    cell.appendChild(box);
+    return cell;
+}
+
 function textCell(text, className) {
     const cell = document.createElement('td');
     if (className) cell.className = className;
@@ -127,7 +144,7 @@ function populatePortsTable() {
     portsTable.parentNode._noMatchRow = null;
 
     if (scanData.hosts.length === 0 || !scanData.hosts.some(host => host.ports.length > 0)) {
-        renderEmptyTableMessage(portsTable, 7, 'No open ports found.');
+        renderEmptyTableMessage(portsTable, 8, 'No open ports found.');
         return;
     }
 
@@ -155,6 +172,8 @@ function populatePortsTable() {
         const comment = effectiveComment(entry.ip, port);
         const edited = getPortEdit(entry.ip, port) !== null;
 
+        row.appendChild(selectCell());
+
         const ipCell = document.createElement('td');
         ipCell.className = 'ip-cell';
         ipCell.append(entry.ip, createCopyButton('Copy IP address', entry.ip, 'IP address copied!'));
@@ -178,6 +197,7 @@ function populatePortsTable() {
         row.appendChild(serviceCell);
 
         row.dataset.ip = entry.ip;
+        row.dataset.hostname = entry.hostname || '';
         row.dataset.port = port.port;
         row.dataset.protocol = port.protocol;
         row.dataset.service = port.service;
@@ -196,7 +216,7 @@ function populatePortsTable() {
     portsTable.appendChild(fragment);
 }
 
-const PORT_STATES = ['TBD', 'Done'];
+const PORT_STATES = ['TBD', 'In progress', 'Done'];
 
 // A button rather than a <select>: the select was four elements per row for two
 // words of text, and its <option> labels leaked into the row text so a search
@@ -294,7 +314,7 @@ function setupPortsTableEditing() {
 }
 
 function refreshRowSearch(row) {
-    row.dataset.search = [row.dataset.ip, row.children[1].textContent, row.dataset.port,
+    row.dataset.search = [row.dataset.ip, row.dataset.hostname, row.dataset.port,
                           row.dataset.protocol, row.dataset.service, row.dataset.state,
                           row.dataset.comment].filter(Boolean).join(' ').toLowerCase();
 }

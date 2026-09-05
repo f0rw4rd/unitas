@@ -603,6 +603,66 @@ td.numeric {
     border-color: var(--accent);
 }
 
+/* Batch triage: the selection column and the bar that acts on it */
+.select-col {
+    width: 2.2rem;
+    text-align: center;
+    padding-right: 0;
+}
+
+.select-col input {
+    cursor: pointer;
+    margin: 0;
+}
+
+tr.row-selected>td {
+    background-color: var(--surface-2);
+}
+
+.batch-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background-color: var(--surface-2);
+}
+
+.batch-count {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.batch-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.batch-btn {
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--border-strong);
+    background-color: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.batch-btn:hover {
+    background-color: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+}
+
+.batch-clear {
+    margin-left: auto;
+}
+
 /* Editable status and comment cells */
 .state-toggle,
 .comment-input {

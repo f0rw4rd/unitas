@@ -135,8 +135,11 @@ The file opens straight from the filesystem, needs no server and no network conn
 
 ### Triage in the Browser
 
-The Ports view is editable: the status column (TBD/Done) and the comment column can be
-changed while working through the hosts. Against a running `-H` server the edits go to
+The Ports view is editable: the status column (TBD / In progress / Done) and the comment
+column can be changed while working through the hosts. Both the Ports and the Hosts view
+have a select column with shift-click ranges and a "Mark as" bar, so a run of ports or a
+set of hosts is one gesture rather than one click per row; on the Hosts view it marks
+every port of the selected hosts. Against a running `-H` server the edits go to
 `<scan folder>/state.md`; from a single file report or a dropped JSON they are stored in
 the browser and "Export state.md" writes them out in the format `unitas -u` merges back
 in.

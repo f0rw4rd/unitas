@@ -419,9 +419,11 @@ function setupTableSorting() {
     });
 }
 
+// The triage tables lead with the selection checkbox, so their data starts at
+// column 1.
 const SORT_FIELDS = {
-    'hosts-table': { ip: 0, hostname: 1, mac: 2, vendor: 3, ports: 4 },
-    'ports-table': { ip: 0, hostname: 1, port: 2, protocol: 3, service: 4 },
+    'hosts-table': { ip: 1, hostname: 2, mac: 3, vendor: 4, ports: 5 },
+    'ports-table': { ip: 1, hostname: 2, port: 3, protocol: 4, service: 5 },
     'services-table': { service: 0, count: 1, hosts: 2 },
     'up-hosts-table': { ip: 0, reason: 1 }
 };

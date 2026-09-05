@@ -150,10 +150,20 @@
             <div id="hosts-view" class="view active">
                 <div class="panel">
                     <h2>Hosts with Open Ports</h2>
+                    <div id="hosts-batch" class="batch-bar hidden">
+                        <span id="hosts-batch-count" class="batch-count"></span>
+                        <span class="batch-label">Mark every port as</span>
+                        <button type="button" class="batch-btn" data-mark="TBD">TBD</button>
+                        <button type="button" class="batch-btn" data-mark="In progress">In progress</button>
+                        <button type="button" class="batch-btn" data-mark="Done">Done</button>
+                        <button type="button" class="batch-btn batch-clear" data-clear>Clear selection</button>
+                    </div>
                     <div class="table-container">
                         <table id="hosts-table">
                             <thead>
                                 <tr>
+                                    <th class="select-col"><input type="checkbox" data-select-all
+                                        aria-label="Select every visible host"></th>
                                     <th class="sortable" data-sort="ip">IP <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="hostname">Hostname <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="mac">MAC Address <span class="sort-indicator"></span></th>
@@ -173,12 +183,23 @@
                     <div class="status-filter">
                         <button class="status-btn active" data-status="all">All</button>
                         <button class="status-btn" data-status="tbd">TBD</button>
+                        <button class="status-btn" data-status="in progress">In progress</button>
                         <button class="status-btn" data-status="done">Done</button>
+                    </div>
+                    <div id="ports-batch" class="batch-bar hidden">
+                        <span id="ports-batch-count" class="batch-count"></span>
+                        <span class="batch-label">Mark as</span>
+                        <button type="button" class="batch-btn" data-mark="TBD">TBD</button>
+                        <button type="button" class="batch-btn" data-mark="In progress">In progress</button>
+                        <button type="button" class="batch-btn" data-mark="Done">Done</button>
+                        <button type="button" class="batch-btn batch-clear" data-clear>Clear selection</button>
                     </div>
                     <div class="table-container">
                         <table id="ports-table">
                             <thead>
                                 <tr>
+                                    <th class="select-col"><input type="checkbox" data-select-all
+                                        aria-label="Select every visible port"></th>
                                     <th class="sortable" data-sort="ip">IP <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="hostname">Hostname <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="port">Port <span class="sort-indicator"></span></th>
@@ -401,6 +422,7 @@
     <script src="static/js/networkGraph.js"></script>
     <script src="static/js/filters.js"></script>
     <script src="static/js/analysis.js"></script>
+    <script src="static/js/selection.js"></script>
     <script src="static/js/app.js"></script>
     <script src="static/js/workspace.js"></script>
 </body>
