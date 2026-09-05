@@ -32,7 +32,14 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    
+
+    # PyPI is published to over OIDC (trusted publishing), so the job needs a
+    # token to identify itself with. Naming any permission drops the rest, so
+    # the release step's contents: write has to be spelled out too.
+    permissions:
+      id-token: write
+      contents: write
+
     steps:
     - uses: actions/checkout@v4
       with:
@@ -46,7 +53,7 @@ jobs:
     - name: Install build dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install build wheel twine
+        pip install build wheel
     
     - name: Extract version from tag
       id: get_version
@@ -59,15 +66,15 @@ jobs:
     - name: Build package
       run: python -m build
     
+    # Trusted publishing: PyPI trusts this repository and workflow by name, so
+    # there is no token to store or rotate. Username and password uploads are
+    # what the 403 came from.
     - name: Publish to PyPI
-      env:
-        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-      run: twine upload dist/*
+      uses: pypa/gh-action-pypi-publish@release/v1
     
     - name: Create GitHub Release
       id: create_release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         name: Unitas ${{ env.VERSION }}
         draft: false
