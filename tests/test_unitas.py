@@ -7,6 +7,7 @@ import socket
 import sys
 import time
 import tempfile
+import json
 import re
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
@@ -34,7 +35,12 @@ from unitas.utils import (
     find_nmap_ip_address,
     generate_service_urls,
 )
-from unitas.report import build_single_file_report, find_resources_dir
+from unitas.report import (
+    build_single_file_report,
+    find_resources_dir,
+    _embed_json,
+    _guard_script_source,
+)
 from unitas.utils import hostup_dict
 
 
@@ -1507,6 +1513,85 @@ class TestNmapSweepParsing(unittest.TestCase):
         self.assertEqual(hostup_dict.get("10.0.0.1"), "echo-reply")
         self.assertNotIn("10.0.0.2", hostup_dict)
         hostup_dict.clear()
+
+
+class TestReportEscaping(unittest.TestCase):
+    """Scan data is written by the scanned hosts; it must not be able to end the
+    inline script of a report that gets handed to somebody else."""
+
+    PAYLOADS = [
+        "</script><img src=x onerror=alert(1)>",
+        "</SCRIPT >",
+        "</ScRiPt",
+        "<!--<script>",
+        "plain < angle",
+    ]
+
+    def test_embedded_json_has_no_parser_visible_angle_bracket(self):
+        for payload in self.PAYLOADS:
+            with self.subTest(payload=payload):
+                embedded = _embed_json({"service": payload})
+                self.assertNotIn("<", embedded)
+                # and it is still the same string after JSON.parse
+                self.assertEqual(json.loads(embedded)["service"], payload)
+
+    def test_inlined_script_source_guard_is_case_insensitive(self):
+        guarded = _guard_script_source('a = "</SCRIPT >"; b = "</script>"; c = "</ScRiPt";')
+        self.assertNotIn("</SCRIPT", guarded)
+        self.assertNotIn("</script", guarded)
+        self.assertNotIn("</ScRiPt", guarded)
+        self.assertIn("<\\/SCRIPT >", guarded)
+
+    def test_report_with_a_hostile_banner_stays_intact(self):
+        host = HostScanData("10.0.0.1")
+        host.set_hostname("</script><img src=x onerror=alert(1)>")
+        host.add_port("80", "tcp", "TBD", "http", "</SCRIPT > banner")
+        report = build_single_file_report(JsonConverter({"10.0.0.1": host}).convert())
+
+        # the document must not gain a tag from the scan data
+        self.assertNotIn("<img src=x", report)
+        self.assertNotIn("</SCRIPT >", report)
+        # the payload is still carried, escaped
+        self.assertIn("\\u003c/script>", report)
+
+    def test_the_viewer_ships_a_content_security_policy(self):
+        index = os.path.join(find_resources_dir(), "index.html")
+        with open(index, "r", encoding="utf-8") as f:
+            html = f.read()
+        self.assertIn("Content-Security-Policy", html)
+        self.assertIn("connect-src 'self'", html)
+        self.assertIn("default-src 'none'", html)
+
+
+class TestViewerEscapesScanData(unittest.TestCase):
+    """The escaping in the viewer itself is covered by tests/test_viewer_xss.py,
+    which drives a real browser. This keeps the sinks from growing back."""
+
+    # helpers that escape their own output, so interpolating their result is fine
+    SAFE_HELPERS = ("formatPortLine", "formatNodeTooltip", "formatEdgeTooltip")
+
+    def test_no_unescaped_interpolation_into_markup(self):
+        js_dir = os.path.join(find_resources_dir(), "static", "js")
+        offenders = []
+
+        for name in ("networkGraph.js", "analysis.js"):
+            with open(os.path.join(js_dir, name), "r", encoding="utf-8") as f:
+                for number, line in enumerate(f, 1):
+                    if "${" not in line or "escapeHtml" in line:
+                        continue
+                    # values interpolated into markup, ignoring plain counts
+                    for match in re.findall(r"\$\{([^}]+)\}", line):
+                        expression = match.strip()
+                        if any(helper in expression for helper in self.SAFE_HELPERS):
+                            continue
+                        if re.search(
+                            r"\b(ip|hostname|service|comment|reason|banner|product|"
+                            r"version|port|protocol|state|subnet)\b",
+                            expression,
+                        ) and not re.search(r"\.(length|size)\b", expression):
+                            offenders.append(f"{name}:{number}: {expression}")
+
+        self.assertEqual(offenders, [], "scan data interpolated into markup unescaped")
 
 
 if __name__ == "__main__":

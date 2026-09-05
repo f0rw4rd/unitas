@@ -49,9 +49,24 @@ def _script_sources(html: str) -> List[str]:
     return sources
 
 
-def _guard_closing_tag(content: str) -> str:
-    """Keep an embedded "</script>" from ending the inline script early."""
-    return content.replace("</script>", "<\\/script>")
+def _guard_script_source(content: str) -> str:
+    """Keep an embedded "</script>" in inlined JS from ending it early.
+
+    The HTML parser closes the element on any case and on trailing whitespace
+    ("</SCRIPT >"), so the match cannot be the literal lowercase tag.
+    """
+    return re.sub(r"</(script)", r"<\\/\1", content, flags=re.IGNORECASE)
+
+
+def _embed_json(data) -> str:
+    """Serialise the scan for an inline <script>.
+
+    Scan data is written by the scanned hosts, so it must not be able to end
+    the script element or open a comment. Escaping "<" as \\u003c is valid JSON,
+    survives JSON.parse unchanged, and covers "</script", "<script" and "<!--"
+    at once. json.dumps already escapes U+2028/U+2029 with ensure_ascii.
+    """
+    return json.dumps(data).replace("<", "\\u003c")
 
 
 def build_single_file_report(json_content: str, resources_dir: str = None) -> str:
@@ -91,7 +106,7 @@ def build_single_file_report(json_content: str, resources_dir: str = None) -> st
             continue
         html = html.replace(
             tag.group(0),
-            f"<script>\n{_guard_closing_tag(_read(js_path))}\n</script>",
+            f"<script>\n{_guard_script_source(_read(js_path))}\n</script>",
         )
 
     # Drop whatever external scripts are left, an offline report cannot use them
@@ -101,7 +116,7 @@ def build_single_file_report(json_content: str, resources_dir: str = None) -> st
     data = json.loads(json_content)
     bootstrap = (
         "<script>\n"
-        "window.scanData = " + _guard_closing_tag(json.dumps(data)) + ";\n"
+        "window.scanData = " + _embed_json(data) + ";\n"
         "document.addEventListener('DOMContentLoaded', function () {\n"
         "    validateAndDisplayData(window.scanData);\n"
         "});\n"

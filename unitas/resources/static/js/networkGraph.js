@@ -165,7 +165,7 @@ function createGraphData() {
                 nodes.push({
                     id: serviceId,
                     label: serviceName,
-                    title: `<strong>${serviceName}</strong><br>Instances: ${serviceInstances}`,
+                    title: `<strong>${escapeHtml(serviceName)}</strong><br>Instances: ${serviceInstances}`,
                     group: "service",
                     type: "service",
                     value: Math.max(8, Math.min(25, 8 + serviceInstances)),
@@ -199,7 +199,7 @@ function createGraphData() {
             nodes.push({
                 id: nextId++,
                 label: host.ip,
-                title: `<strong>${host.ip}</strong><br>Up: ${host.reason}`,
+                title: `<strong>${escapeHtml(host.ip)}</strong><br>Up: ${escapeHtml(host.reason)}`,
                 group: "up-only",
                 type: "up-host",
                 ip: host.ip,
@@ -401,8 +401,8 @@ function showNodeDetails(node) {
             content = `
                 <dl>
                     <dt>IP Address:</dt>
-                    <dd>${node.ip}</dd>
-                    ${node.hostname ? `<dt>Hostname:</dt><dd>${node.hostname}</dd>` : ""}
+                    <dd>${escapeHtml(node.ip)}</dd>
+                    ${node.hostname ? `<dt>Hostname:</dt><dd>${escapeHtml(node.hostname)}</dd>` : ""}
                     <dt>Open Ports:</dt>
                     <dd>${node.ports} port(s)</dd>
                 </dl>
@@ -411,7 +411,8 @@ function showNodeDetails(node) {
             `;
 
             node.original.ports.forEach(port => {
-                content += `<li>${port.port}/${port.protocol} (${port.service}) - ${port.state || 'TBD'}</li>`;
+                content += `<li>${escapeHtml(port.port)}/${escapeHtml(port.protocol)} ` +
+                    `(${escapeHtml(port.service)}) - ${escapeHtml(port.state || 'TBD')}</li>`;
             });
 
             content += "</ul>";
@@ -421,7 +422,7 @@ function showNodeDetails(node) {
             content = `
                 <dl>
                     <dt>Service:</dt>
-                    <dd>${node.service}</dd>
+                    <dd>${escapeHtml(node.service)}</dd>
                     <dt>Status:</dt>
                     <dd>${node.uncertain ? "Uncertain" : "Confirmed"}</dd>
                     ${node.tls ? "<dt>Security:</dt><dd>TLS Enabled</dd>" : ""}
@@ -432,7 +433,8 @@ function showNodeDetails(node) {
 
             getConnectedHosts(node.id).forEach(hostId => {
                 const hostNode = nodesDataset.get(hostId);
-                content += `<li>${hostNode.ip}${hostNode.hostname ? ` (${hostNode.hostname})` : ""}</li>`;
+                content += `<li>${escapeHtml(hostNode.ip)}` +
+                    `${hostNode.hostname ? ` (${escapeHtml(hostNode.hostname)})` : ""}</li>`;
             });
 
             content += "</ul>";
@@ -442,11 +444,11 @@ function showNodeDetails(node) {
             content = `
                 <dl>
                     <dt>IP Address:</dt>
-                    <dd>${node.ip}</dd>
+                    <dd>${escapeHtml(node.ip)}</dd>
                     <dt>Status:</dt>
                     <dd>Up (no open ports)</dd>
                     <dt>Reason:</dt>
-                    <dd>${node.reason}</dd>
+                    <dd>${escapeHtml(node.reason)}</dd>
                 </dl>
             `;
             break;
@@ -518,11 +520,18 @@ function getConnectedServices(hostId) {
     }).map(edge => edge.to);
 }
 
+// The tooltips are markup by design (<strong>, <br>), so every value taken from
+// the scan is escaped as it goes in.
+function formatPortLine(port) {
+    const label = `${escapeHtml(port.port)}/${escapeHtml(port.protocol)} (${escapeHtml(port.service)})`;
+    return port.comment ? `${label} - ${escapeHtml(port.comment)}` : label;
+}
+
 function formatNodeTooltip(host) {
-    let tooltip = `<strong>${host.ip}</strong>`;
+    let tooltip = `<strong>${escapeHtml(host.ip)}</strong>`;
 
     if (host.hostname) {
-        tooltip += `<br>${host.hostname}`;
+        tooltip += `<br>${escapeHtml(host.hostname)}`;
     }
 
     tooltip += `<br>Open Ports: ${host.ports.length}`;
@@ -531,7 +540,7 @@ function formatNodeTooltip(host) {
         tooltip += "<br><br><strong>Ports:</strong><br>";
 
         host.ports.slice(0, 5).forEach(port => {
-            tooltip += `${port.port}/${port.protocol} (${port.service})${port.comment ? ` - ${port.comment}` : ""}<br>`;
+            tooltip += `${formatPortLine(port)}<br>`;
         });
 
         if (host.ports.length > 5) {
@@ -546,7 +555,7 @@ function formatEdgeTooltip(ports) {
     let tooltip = "<strong>Ports:</strong><br>";
 
     ports.forEach(port => {
-        tooltip += `${port.port}/${port.protocol} (${port.service})${port.comment ? ` - ${port.comment}` : ""}<br>`;
+        tooltip += `${formatPortLine(port)}<br>`;
     });
 
     return tooltip;

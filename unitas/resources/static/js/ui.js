@@ -65,6 +65,23 @@ function showToast(message, kind) {
     showToast.timer = setTimeout(() => toast.classList.add('hidden'), 4000);
 }
 
+// Everything in a scan is written by the target: service banners, product and
+// version strings, PTR hostnames. Anything of it that ends up in markup has to
+// be escaped, or a host can run script in the viewer just by answering with an
+// HTML banner.
+const HTML_ESCAPES = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+};
+
+function escapeHtml(value) {
+    if (value === undefined || value === null) return '';
+    return String(value).replace(/[&<>"']/g, character => HTML_ESCAPES[character]);
+}
+
 function activeViewId() {
     const active = document.querySelector('.view.active');
     return active ? active.id : null;

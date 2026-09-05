@@ -5,6 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Unitas Network Scan Viewer</title>
+    <!-- Defence in depth: the scan data comes from the scanned hosts. Inline
+         script and style are how the single file report works, but nothing may
+         be loaded from or sent to anywhere else, so an injected payload cannot
+         reach the network. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none';
+        script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
+        img-src 'self' data:; font-src 'self' data:; connect-src 'self';
+        base-uri 'none'; form-action 'none'">
     <link rel="icon"
         href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23263544'/%3E%3Ccircle cx='16' cy='9' r='3.4' fill='%232f7fd1'/%3E%3Ccircle cx='8' cy='23' r='3.4' fill='%232f9e5f'/%3E%3Ccircle cx='24' cy='23' r='3.4' fill='%23d98324'/%3E%3Cpath d='M16 12.4 8 19.6M16 12.4l8 7.2M8 23h16' stroke='%239fb0c0' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="static/css/styles.css">
