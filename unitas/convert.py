@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from ipaddress import ip_address
 import json
 import logging
 import re
@@ -8,7 +7,19 @@ from typing import Dict, List, Optional
 
 from unitas import HostScanData
 from unitas.model import PortDetails
-from unitas.utils import get_version
+from unitas.utils import get_version, sort_key_for_ip
+
+# A "|" inside a cell would end it early, so it is written escaped and the
+# parser below accepts the escaped form.
+MARKDOWN_CELL = r"(?:\\.|[^|\\])*"
+
+
+def escape_markdown_cell(value: str) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("|", "\\|").strip()
+
+
+def unescape_markdown_cell(value: str) -> str:
+    return re.sub(r"\\(.)", r"\1", value or "")
 
 
 class Convert(ABC):
@@ -27,7 +38,8 @@ class Convert(ABC):
     def sort_global_state_by_ip(
         global_state: Dict[str, HostScanData],
     ) -> Dict[str, HostScanData]:
-        sorted_ips = sorted(global_state.keys(), key=ip_address)
+        # comparing an IPv4Address with an IPv6Address raises, sort by version first
+        sorted_ips = sorted(global_state.keys(), key=sort_key_for_ip)
         return {ip: global_state[ip] for ip in sorted_ips}
 
 
@@ -74,27 +86,36 @@ class MarkdownConvert(Convert):
             # Find the maximum length of each column
             for host in self.global_state.values():
                 max_ip_len = max(max_ip_len, len(host.ip))
-                max_hostname_len = max(max_hostname_len, len(host.hostname))
+                max_hostname_len = max(
+                    max_hostname_len, len(escape_markdown_cell(host.hostname))
+                )
                 for port in host.get_sorted_ports():
                     port_info = f"{port.port}/{port.protocol}({port.service})"
                     max_port_len = max(max_port_len, len(port_info))
-                    max_status_len = max(max_status_len, len(port.state))
-                    max_comment_len = max(max_comment_len, len(port.comment))
+                    max_status_len = max(
+                        max_status_len, len(escape_markdown_cell(port.state))
+                    )
+                    max_comment_len = max(
+                        max_comment_len, len(escape_markdown_cell(port.comment))
+                    )
                     if self.show_origin:
                         source_info = self._format_source_info(port)
                         max_source_len = max(max_source_len, len(source_info))
 
         for host in self.global_state.values():
+            hostname = escape_markdown_cell(host.hostname)
             for port in host.get_sorted_ports():
                 service = f"{port.port}/{port.protocol}({port.service})"
+                state = escape_markdown_cell(port.state)
+                comment = escape_markdown_cell(port.comment)
                 if self.show_origin:
                     source_info = self._format_source_info(port)
                     output.append(
-                        f"|{host.ip.ljust(max_ip_len)}|{host.hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{port.state.ljust(max_status_len)}|{port.comment.ljust(max_comment_len)}|{source_info.ljust(max_source_len)}|"
+                        f"|{host.ip.ljust(max_ip_len)}|{hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{state.ljust(max_status_len)}|{comment.ljust(max_comment_len)}|{source_info.ljust(max_source_len)}|"
                     )
                 else:
                     output.append(
-                        f"|{host.ip.ljust(max_ip_len)}|{host.hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{port.state.ljust(max_status_len)}|{port.comment.ljust(max_comment_len)}|"
+                        f"|{host.ip.ljust(max_ip_len)}|{hostname.ljust(max_hostname_len)}|{service.ljust(max_port_len)}|{state.ljust(max_status_len)}|{comment.ljust(max_comment_len)}|"
                     )
         return "\n".join(output) + "\n"
 
@@ -136,13 +157,20 @@ class MarkdownConvert(Convert):
             counter += 1
             if has_source_column:
                 match = re.match(
-                    r"\s*\|([^|]+)\|\s*([^|]*)\s*\|\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|",
+                    r"\s*\|([^|]+)\|\s*(" + MARKDOWN_CELL + r")\s*\|"
+                    r"\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|"
+                    r"\s*(" + MARKDOWN_CELL + r")\s*\|"
+                    r"\s*(" + MARKDOWN_CELL + r")\s*\|"
+                    r"\s*(" + MARKDOWN_CELL + r")\s*\|",
                     line.strip(),
                 )
                 if match:
                     ip, hostname, port, protocol, service, status, comment, source = (
                         match.groups()
                     )
+                    hostname = unescape_markdown_cell(hostname)
+                    status = unescape_markdown_cell(status)
+                    comment = unescape_markdown_cell(comment)
 
                     # Parse multiple source information from comma-separated format
                     sources = []
@@ -198,13 +226,19 @@ class MarkdownConvert(Convert):
                     )
             else:
                 match = re.match(
-                    r"\s*\|([^|]+)\|\s*([^|]*)\s*\|\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|\s*([^|]*)\s*\|\s*([^|]*)\s*\|",
+                    r"\s*\|([^|]+)\|\s*(" + MARKDOWN_CELL + r")\s*\|"
+                    r"\s*([^|/]+)/([^|(]+)\(([^)]+)\)\s*\|"
+                    r"\s*(" + MARKDOWN_CELL + r")\s*\|"
+                    r"\s*(" + MARKDOWN_CELL + r")\s*\|",
                     line.strip(),
                 )
                 if match:
                     ip, hostname, port, protocol, service, status, comment = (
                         match.groups()
                     )
+                    hostname = unescape_markdown_cell(hostname)
+                    status = unescape_markdown_cell(status)
+                    comment = unescape_markdown_cell(comment)
                     ip = ip.strip()
                     if ip not in result:
                         result[ip] = HostScanData(ip)

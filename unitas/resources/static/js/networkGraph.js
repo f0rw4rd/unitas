@@ -34,6 +34,9 @@ function renderGraph() {
             network = null;
         }
 
+        highlightedNodes = [];
+        highlightedEdges = [];
+
         // Process subnets for the network graph
         processSubnets();
 
@@ -73,6 +76,10 @@ function renderGraph() {
 
         setupNetworkEvents();
 
+        if (document.querySelector('input[name="layout"]:checked').value === "circular") {
+            placeNodesInCircle();
+        }
+
         try {
             initializeMinimap(nodes, edges);
         } catch (error) {
@@ -92,20 +99,36 @@ function createGraphData() {
     const nodeIdMap = {};
     const servicesMap = new Map();
 
+    // The sidebar filters are applied while the graph is built; anything else
+    // would be thrown away by the rebuild.
+    const filters = getGraphFilters();
+    const counts = { hosts: 0, totalHosts: 0, ports: 0, totalPorts: 0 };
+    const serviceCounts = countServices(window.scanData.hosts, filters);
+
     // Process hosts
     window.scanData.hosts.forEach((host) => {
+        counts.totalHosts += 1;
+        counts.totalPorts += host.ports.length;
+
+        if (!hostMatchesFilters(host, filters)) return;
+
+        const ports = host.ports.filter(port => portMatchesFilters(port, filters));
+        if (ports.length === 0) return;
+
         const hostId = nextId++;
         nodeIdMap[host.ip] = hostId;
+        counts.hosts += 1;
+        counts.ports += ports.length;
 
         // Calculate value based on number of ports
-        const portCount = host.ports.length;
+        const portCount = ports.length;
 
         nodes.push({
             id: hostId,
             label: host.hostname || host.ip,
             title: formatNodeTooltip(host),
             group: "host",
-            subnetGroup: getSubnetGroup(host.ip),
+            subnetGroup: getSubnet(host.ip),
             type: "host",
             ip: host.ip,
             hostname: host.hostname,
@@ -117,7 +140,7 @@ function createGraphData() {
         // Process services on this host
         const hostServices = {};
 
-        host.ports.forEach((port) => {
+        ports.forEach((port) => {
             const serviceName = port.service.replace("?", "");
 
             if (!hostServices[serviceName]) {
@@ -137,12 +160,12 @@ function createGraphData() {
                 servicesMap.set(serviceName, serviceId);
 
                 // Count total instances of this service
-                const serviceInstances = countServiceInstances(serviceName);
+                const serviceInstances = countServiceInstances(serviceCounts, serviceName);
 
                 nodes.push({
                     id: serviceId,
                     label: serviceName,
-                    title: `<strong>${serviceName}</strong><br>Instances: ${serviceInstances}`,
+                    title: `<strong>${escapeHtml(serviceName)}</strong><br>Instances: ${serviceInstances}`,
                     group: "service",
                     type: "service",
                     value: Math.max(8, Math.min(25, 8 + serviceInstances)),
@@ -166,22 +189,28 @@ function createGraphData() {
     });
 
     // Add hosts that are up but have no open ports
-    if (window.scanData.hostsUp && document.getElementById("show-up-hosts").checked) {
+    if (window.scanData.hostsUp && filters.showUpHosts) {
         window.scanData.hostsUp.forEach((host) => {
+            if (filters.subnet && !host.ip.startsWith(filters.subnet)) return;
+            // an up host has no service or port to match against
+            if (filters.service !== "all" || filters.portMin > 1 || filters.portMax < 65535) {
+                return;
+            }
             nodes.push({
                 id: nextId++,
                 label: host.ip,
-                title: `<strong>${host.ip}</strong><br>Up: ${host.reason}`,
+                title: `<strong>${escapeHtml(host.ip)}</strong><br>Up: ${escapeHtml(host.reason)}`,
                 group: "up-only",
                 type: "up-host",
                 ip: host.ip,
                 reason: host.reason,
                 value: 8,
-                subnetGroup: getSubnetGroup(host.ip)
+                subnetGroup: getSubnet(host.ip)
             });
         });
     }
 
+    updateFilterSummary(counts);
     return { nodes, edges };
 }
 
@@ -259,8 +288,10 @@ function getSelectedLayout() {
                 }
             };
         case "circular":
+            // positions are assigned in placeNodesInCircle() once the nodes
+            // exist, the layout engine itself has no circular mode
             return {
-                improvedLayout: true,
+                improvedLayout: false,
                 randomSeed: 42
             };
         default:
@@ -268,6 +299,34 @@ function getSelectedLayout() {
                 improvedLayout: true
             };
     }
+}
+
+// vis has no circular layout, so place the nodes on two rings by hand: hosts
+// outside, the shared service nodes inside, with physics off so they stay put.
+function placeNodesInCircle() {
+    if (!network || !nodesDataset) return;
+
+    const all = nodesDataset.get();
+    const hosts = all.filter(node => node.type !== "service");
+    const services = all.filter(node => node.type === "service");
+    const radius = Math.max(300, all.length * 12);
+
+    const place = (list, ringRadius) => {
+        list.forEach((node, index) => {
+            const angle = (2 * Math.PI * index) / Math.max(1, list.length);
+            network.moveNode(
+                node.id,
+                Math.cos(angle) * ringRadius,
+                Math.sin(angle) * ringRadius
+            );
+        });
+    };
+
+    network.setOptions({ physics: { enabled: false } });
+    physicsEnabled = false;
+    place(hosts, radius);
+    place(services, radius / 2.2);
+    network.fit();
 }
 
 function setupNetworkEvents() {
@@ -342,8 +401,8 @@ function showNodeDetails(node) {
             content = `
                 <dl>
                     <dt>IP Address:</dt>
-                    <dd>${node.ip}</dd>
-                    ${node.hostname ? `<dt>Hostname:</dt><dd>${node.hostname}</dd>` : ""}
+                    <dd>${escapeHtml(node.ip)}</dd>
+                    ${node.hostname ? `<dt>Hostname:</dt><dd>${escapeHtml(node.hostname)}</dd>` : ""}
                     <dt>Open Ports:</dt>
                     <dd>${node.ports} port(s)</dd>
                 </dl>
@@ -352,7 +411,8 @@ function showNodeDetails(node) {
             `;
 
             node.original.ports.forEach(port => {
-                content += `<li>${port.port}/${port.protocol} (${port.service}) - ${port.state || 'TBD'}</li>`;
+                content += `<li>${escapeHtml(port.port)}/${escapeHtml(port.protocol)} ` +
+                    `(${escapeHtml(port.service)}) - ${escapeHtml(port.state || 'TBD')}</li>`;
             });
 
             content += "</ul>";
@@ -362,7 +422,7 @@ function showNodeDetails(node) {
             content = `
                 <dl>
                     <dt>Service:</dt>
-                    <dd>${node.service}</dd>
+                    <dd>${escapeHtml(node.service)}</dd>
                     <dt>Status:</dt>
                     <dd>${node.uncertain ? "Uncertain" : "Confirmed"}</dd>
                     ${node.tls ? "<dt>Security:</dt><dd>TLS Enabled</dd>" : ""}
@@ -373,7 +433,8 @@ function showNodeDetails(node) {
 
             getConnectedHosts(node.id).forEach(hostId => {
                 const hostNode = nodesDataset.get(hostId);
-                content += `<li>${hostNode.ip}${hostNode.hostname ? ` (${hostNode.hostname})` : ""}</li>`;
+                content += `<li>${escapeHtml(hostNode.ip)}` +
+                    `${hostNode.hostname ? ` (${escapeHtml(hostNode.hostname)})` : ""}</li>`;
             });
 
             content += "</ul>";
@@ -383,11 +444,11 @@ function showNodeDetails(node) {
             content = `
                 <dl>
                     <dt>IP Address:</dt>
-                    <dd>${node.ip}</dd>
+                    <dd>${escapeHtml(node.ip)}</dd>
                     <dt>Status:</dt>
                     <dd>Up (no open ports)</dd>
                     <dt>Reason:</dt>
-                    <dd>${node.reason}</dd>
+                    <dd>${escapeHtml(node.reason)}</dd>
                 </dl>
             `;
             break;
@@ -427,16 +488,24 @@ function hideTooltip() {
 }
 
 // Graph utility functions
-function countServiceInstances(serviceName) {
-    let count = 0;
-    window.scanData.hosts.forEach(host => {
+// One pass over the ports instead of one pass per distinct service: this used
+// to be O(services x ports) per graph render, and it counted the unfiltered
+// data, so the tooltip disagreed with a filtered graph.
+function countServiceInstances(counts, serviceName) {
+    return counts.get(serviceName) || 0;
+}
+
+function countServices(hosts, filters) {
+    const counts = new Map();
+    hosts.forEach(host => {
+        if (filters && !hostMatchesFilters(host, filters)) return;
         host.ports.forEach(port => {
-            if (port.service.replace("?", "") === serviceName) {
-                count++;
-            }
+            if (filters && !portMatchesFilters(port, filters)) return;
+            const name = port.service.replace("?", "");
+            counts.set(name, (counts.get(name) || 0) + 1);
         });
     });
-    return count;
+    return counts;
 }
 
 function getConnectedHosts(serviceId) {
@@ -451,11 +520,18 @@ function getConnectedServices(hostId) {
     }).map(edge => edge.to);
 }
 
+// The tooltips are markup by design (<strong>, <br>), so every value taken from
+// the scan is escaped as it goes in.
+function formatPortLine(port) {
+    const label = `${escapeHtml(port.port)}/${escapeHtml(port.protocol)} (${escapeHtml(port.service)})`;
+    return port.comment ? `${label} - ${escapeHtml(port.comment)}` : label;
+}
+
 function formatNodeTooltip(host) {
-    let tooltip = `<strong>${host.ip}</strong>`;
+    let tooltip = `<strong>${escapeHtml(host.ip)}</strong>`;
 
     if (host.hostname) {
-        tooltip += `<br>${host.hostname}`;
+        tooltip += `<br>${escapeHtml(host.hostname)}`;
     }
 
     tooltip += `<br>Open Ports: ${host.ports.length}`;
@@ -464,7 +540,7 @@ function formatNodeTooltip(host) {
         tooltip += "<br><br><strong>Ports:</strong><br>";
 
         host.ports.slice(0, 5).forEach(port => {
-            tooltip += `${port.port}/${port.protocol} (${port.service})${port.comment ? ` - ${port.comment}` : ""}<br>`;
+            tooltip += `${formatPortLine(port)}<br>`;
         });
 
         if (host.ports.length > 5) {
@@ -479,86 +555,93 @@ function formatEdgeTooltip(ports) {
     let tooltip = "<strong>Ports:</strong><br>";
 
     ports.forEach(port => {
-        tooltip += `${port.port}/${port.protocol} (${port.service})${port.comment ? ` - ${port.comment}` : ""}<br>`;
+        tooltip += `${formatPortLine(port)}<br>`;
     });
 
     return tooltip;
 }
 
+// Only the previously highlighted ids are reset and every change goes out as
+// one batched update; resetting both whole datasets per click meant O(nodes +
+// edges) allocations and dataset writes every time a node was selected.
+let highlightedNodes = [];
+let highlightedEdges = [];
+
+// A batched node update has to carry the node's value: vis recomputes the
+// scaling range over the updated entries and throws without it.
+function nodeUpdate(id, properties) {
+    const node = nodesDataset.get(id);
+    if (!node) return null;
+    return Object.assign({ id: id, value: node.value }, properties);
+}
+
+function clearHighlight() {
+    // ids from a previous graph must never be pushed into a rebuilt dataset:
+    // vis would treat them as new nodes without a value and throw
+    const nodeResets = highlightedNodes
+        // null, not undefined: vis 10 throws on an undefined colour inside a
+        // batched update, null puts the node back on its group default
+        .map(id => nodesDataset && nodeUpdate(id, { color: null, font: null }))
+        .filter(Boolean);
+    const edgeResets = highlightedEdges
+        .filter(edge => edgesDataset && edgesDataset.get(edge.id))
+        .map(edge => ({ id: edge.id, color: null, width: edge.width }));
+
+    if (nodeResets.length) nodesDataset.update(nodeResets);
+    if (edgeResets.length) edgesDataset.update(edgeResets);
+
+    highlightedNodes = [];
+    highlightedEdges = [];
+}
+
 function highlightConnections(nodeId) {
-    // Reset all nodes and edges to default appearance
-    nodesDataset.update(nodesDataset.get().map(node => ({
-        id: node.id,
-        color: undefined,
-        font: undefined
-    })));
+    clearHighlight();
 
-    edgesDataset.update(edgesDataset.get().map(edge => ({
-        id: edge.id,
-        color: undefined,
-        width: edge.originalWidth || edge.width
-    })));
-
-    // Get the selected node
     const node = nodesDataset.get(nodeId);
-    const connectedNodes = new Set();
-    const connectedEdges = new Set();
+    if (!node) return;
 
-    if (node.type === "host") {
-        // Find all edges from this host
-        edgesDataset.get({
-            filter: edge => edge.from === nodeId
-        }).forEach(edge => {
-            connectedNodes.add(edge.to);
-            connectedEdges.add(edge.id);
-        });
-    } else if (node.type === "service") {
-        // Find all edges to this service
-        edgesDataset.get({
-            filter: edge => edge.to === nodeId
-        }).forEach(edge => {
-            connectedNodes.add(edge.from);
-            connectedEdges.add(edge.id);
+    const connectedNodes = new Set();
+    const connectedEdges = [];
+
+    const matches = node.type === "host"
+        ? edge => edge.from === nodeId
+        : node.type === "service"
+            ? edge => edge.to === nodeId
+            : null;
+
+    if (matches) {
+        edgesDataset.get({ filter: matches }).forEach(edge => {
+            connectedNodes.add(node.type === "host" ? edge.to : edge.from);
+            connectedEdges.push(edge);
         });
     }
 
-    // Highlight the selected node
-    nodesDataset.update({
-        id: nodeId,
-        color: {
-            border: "#8e44ad",
-            background: "#9b59b6"
-        },
-        font: {
-            color: "#000000",
-            bold: true
-        }
-    });
+    const nodeUpdates = [
+        nodeUpdate(nodeId, {
+            color: { border: "#8e44ad", background: "#9b59b6" },
+            font: { color: "#000000", bold: true }
+        })
+    ].filter(Boolean);
 
-    // Highlight connected nodes
     connectedNodes.forEach(id => {
-        nodesDataset.update({
-            id: id,
-            color: {
-                border: "#16a085",
-                background: "#1abc9c"
-            },
-            font: {
-                bold: true
-            }
+        const update = nodeUpdate(id, {
+            color: { border: "#16a085", background: "#1abc9c" },
+            font: { bold: true }
         });
+        if (update) nodeUpdates.push(update);
     });
 
-    // Highlight connected edges
-    connectedEdges.forEach(id => {
-        const edge = edgesDataset.get(id);
-        edgesDataset.update({
-            id: id,
-            color: "#16a085",
-            width: 2 * (edge.width || 1),
-            originalWidth: edge.width || 1
-        });
-    });
+    const edgeUpdates = connectedEdges.map(edge => ({
+        id: edge.id,
+        color: "#16a085",
+        width: 2 * (edge.width || 1)
+    }));
+
+    if (nodeUpdates.length) nodesDataset.update(nodeUpdates);
+    if (edgeUpdates.length) edgesDataset.update(edgeUpdates);
+
+    highlightedNodes = nodeUpdates.map(update => update.id);
+    highlightedEdges = connectedEdges.map(edge => ({ id: edge.id, width: edge.width }));
 }
 
 // Minimap functions
@@ -627,6 +710,10 @@ function initializeMinimap(nodes, edges) {
 function updateMinimap() {
     if (!minimapNetwork || !network) return;
 
+    // it is built inside a hidden container, so it has to be measured again
+    // the first time it is shown
+    minimapNetwork.redraw();
+
     const scale = network.getScale();
     const position = network.getViewPosition();
 
@@ -639,7 +726,10 @@ function updateMinimap() {
 
 // Export graph as PNG
 function exportNetworkImage() {
-    if (!network) return;
+    if (!network) {
+        showError('Render the graph before exporting it as PNG');
+        return;
+    }
 
     const canvas = network.canvas.frame.canvas;
     const link = document.createElement('a');
@@ -650,30 +740,127 @@ function exportNetworkImage() {
     document.body.removeChild(link);
 }
 
-// Save and restore views
+// Save and restore views. They are kept in localStorage, an earlier version
+// stored them in a variable nothing ever read.
+const SAVED_VIEWS_KEY = 'unitas:graphViews';
+
+function loadSavedViews() {
+    try {
+        savedViews = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY)) || {};
+    } catch (error) {
+        savedViews = {};
+    }
+    return savedViews;
+}
+
+function persistSavedViews() {
+    try {
+        localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(savedViews));
+    } catch (error) {
+        showError('Could not store the view: browser storage is unavailable');
+    }
+}
+
+function refreshSavedViewSelect() {
+    const select = document.getElementById('saved-view-select');
+    if (!select) return;
+
+    const names = Object.keys(savedViews).sort();
+    const previous = select.value;
+    select.innerHTML = '';
+
+    if (names.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No saved views';
+        select.appendChild(option);
+        return;
+    }
+
+    names.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+    });
+
+    if (names.includes(previous)) {
+        select.value = previous;
+    }
+}
+
 function saveCurrentView() {
-    if (!network) return;
+    if (!network) {
+        showError('Render the graph before saving a view');
+        return;
+    }
 
     const name = prompt("Enter a name for this view:");
+    if (!name) return;
 
-    if (name) {
-        savedViews[name] = {
-            position: network.getViewPosition(),
-            scale: network.getScale(),
-            pinnedNodes: Array.from(pinnedNodes),
-            filter: {
-                service: document.getElementById('service-filter').value,
-                portMin: document.getElementById('port-min').value,
-                portMax: document.getElementById('port-max').value,
-                subnet: document.getElementById('subnet-filter').value,
-                showUpHosts: document.getElementById('show-up-hosts').checked,
-                showUncertain: document.getElementById('show-uncertain').checked,
-                highlightTls: document.getElementById('highlight-tls').checked
-            }
-        };
+    savedViews[name] = {
+        position: network.getViewPosition(),
+        scale: network.getScale(),
+        pinnedNodes: Array.from(pinnedNodes),
+        filter: {
+            service: document.getElementById('service-filter').value,
+            portMin: document.getElementById('port-min').value,
+            portMax: document.getElementById('port-max').value,
+            subnet: document.getElementById('subnet-filter').value,
+            showUpHosts: document.getElementById('show-up-hosts').checked,
+            showUncertain: document.getElementById('show-uncertain').checked,
+            highlightTls: document.getElementById('highlight-tls').checked
+        }
+    };
 
-        alert(`View "${name}" saved successfully!`);
+    persistSavedViews();
+    refreshSavedViewSelect();
+    document.getElementById('saved-view-select').value = name;
+    showToast(`View "${name}" saved`);
+}
+
+function loadSelectedView() {
+    const select = document.getElementById('saved-view-select');
+    const view = select && savedViews[select.value];
+    if (!view) {
+        showError('No saved view selected');
+        return;
     }
+
+    const filter = view.filter || {};
+    if (filter.service !== undefined) document.getElementById('service-filter').value = filter.service;
+    if (filter.portMin !== undefined) document.getElementById('port-min').value = filter.portMin;
+    if (filter.portMax !== undefined) document.getElementById('port-max').value = filter.portMax;
+    if (filter.subnet !== undefined) document.getElementById('subnet-filter').value = filter.subnet;
+    if (filter.showUpHosts !== undefined) document.getElementById('show-up-hosts').checked = filter.showUpHosts;
+    if (filter.showUncertain !== undefined) document.getElementById('show-uncertain').checked = filter.showUncertain;
+    if (filter.highlightTls !== undefined) document.getElementById('highlight-tls').checked = filter.highlightTls;
+
+    refreshGraph();
+
+    if (network && view.position) {
+        network.moveTo({
+            position: view.position,
+            scale: view.scale || 1,
+            animation: false
+        });
+    }
+
+    showToast(`View "${select.value}" loaded`);
+}
+
+function deleteSelectedView() {
+    const select = document.getElementById('saved-view-select');
+    const name = select && select.value;
+    if (!name || !savedViews[name]) {
+        showError('No saved view selected');
+        return;
+    }
+
+    delete savedViews[name];
+    persistSavedViews();
+    refreshSavedViewSelect();
+    showToast(`View "${name}" deleted`);
 }
 
 // Toggle physics simulation
@@ -727,14 +914,18 @@ function focusNode() {
     }
 }
 
-// Toggle minimap visibility
+// Toggle minimap visibility. The minimap is hidden by default (see the
+// stylesheet), previously it started visible and the first click hid it.
 function toggleMinimap() {
     const minimap = document.getElementById("graph-minimap");
-    if (minimap.style.display === 'none') {
-        minimap.style.display = 'block';
+    const button = document.getElementById("toggle-minimap");
+    const visible = minimap.classList.toggle('visible');
+
+    if (button) {
+        button.setAttribute('aria-pressed', visible ? 'true' : 'false');
+    }
+    if (visible) {
         updateMinimap();
-    } else {
-        minimap.style.display = 'none';
     }
 }
 

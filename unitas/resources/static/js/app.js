@@ -8,8 +8,6 @@ document.addEventListener('DOMContentLoaded', function () {
     const errorMessage = document.getElementById('error-message');
     const reloadBtn = document.getElementById('reload-btn');
     const exportMarkdownBtn = document.getElementById('export-markdown-btn');
-    const loadingOverlay = document.getElementById('loading-overlay');
-    const nodeDetails = document.getElementById('node-details');
     const searchInput = document.getElementById('search');
 
     // Setup drag and drop handlers
@@ -78,10 +76,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         pinnedNodes.clear();
-        filteredItems.hosts.clear();
-        filteredItems.services.clear();
-        filteredItems.nodes.clear();
-        filteredItems.edges.clear();
     });
 
     // Handle export markdown button
@@ -90,6 +84,17 @@ document.addEventListener('DOMContentLoaded', function () {
     // Handle export CSV button
     const exportCsvBtn = document.getElementById('export-csv-btn');
     exportCsvBtn.addEventListener('click', exportCurrentViewAsCSV);
+
+    // Triage: state.md export, edit reset and the target list menu
+    document.getElementById('export-state-btn').addEventListener('click', exportStateMarkdown);
+    document.getElementById('reset-edits-btn').addEventListener('click', function () {
+        if (editCount() === 0) return;
+        if (confirm(`Discard ${editCount()} edited port(s)?`)) {
+            clearEdits();
+            showToast('Edits discarded');
+        }
+    });
+    setupCopyMenu();
 
     // Navigation
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -109,10 +114,14 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    // Search functionality
+    // Search functionality. Debounced: a filter pass walks every row of every
+    // table, and input events are not coalesced, so typing a word used to queue
+    // one full pass per character.
+    let searchTimer = null;
     searchInput.addEventListener('input', function () {
-        const searchTerm = this.value.toLowerCase();
-        filterTables(searchTerm);
+        const searchTerm = this.value;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => filterTables(searchTerm), 120);
     });
 
     // Status filter for ports view
@@ -127,6 +136,10 @@ document.addEventListener('DOMContentLoaded', function () {
     // Setup network graph event handlers
     setupNetworkEventHandlers();
 
+    // Saved graph views survive a reload
+    loadSavedViews();
+    refreshSavedViewSelect();
+
     // Check for auto-load data from URL parameters
     checkForAutoLoadData();
 
@@ -138,6 +151,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Setup table sorting
     setupTableSorting();
+
+    // Delegated handlers for the editable status and comment cells
+    setupPortsTableEditing();
 });
 
 function setupNetworkEventHandlers() {
@@ -151,6 +167,8 @@ function setupNetworkEventHandlers() {
     document.getElementById('fit-graph').addEventListener('click', fitGraph);
     document.getElementById('export-png').addEventListener('click', exportNetworkImage);
     document.getElementById('save-view').addEventListener('click', saveCurrentView);
+    document.getElementById('load-view').addEventListener('click', loadSelectedView);
+    document.getElementById('delete-view').addEventListener('click', deleteSelectedView);
     document.getElementById('run-analysis').addEventListener('click', runAnalysis);
 
     // Filter controls
@@ -182,6 +200,19 @@ function setupNetworkEventHandlers() {
                 layout: getSelectedLayout()
             });
 
+            if (this.value === 'circular') {
+                // vis has no circular layout, the nodes are placed by hand
+                placeNodesInCircle();
+                return;
+            }
+
+            // leaving the circular layout means physics has to come back
+            if (!physicsEnabled) {
+                network.setOptions({ physics: { enabled: true } });
+                physicsEnabled = true;
+                document.getElementById('toggle-physics').textContent = 'Disable Physics';
+            }
+
             if (this.value !== 'hierarchical') {
                 pinnedNodes.forEach(nodeId => {
                     if (positions[nodeId]) {
@@ -198,61 +229,13 @@ function setupNetworkEventHandlers() {
     });
 }
 
-function setupEventHandlers() {
-    // Setup navigation handlers
-    document.querySelectorAll('.nav-item').forEach(item => {
-        item.addEventListener('click', () => {
-            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-
-            item.classList.add('active');
-            const viewId = item.getAttribute('data-view');
-            document.getElementById(viewId).classList.add('active');
-
-            if (viewId === 'graph-view' && window.scanData) {
-                if (!network) {
-                    renderGraph();
-                }
-            }
-        });
-    });
-}
-
 function checkForAutoLoadData() {
     // Function to check for URL parameters to auto-load data
     const urlParams = new URLSearchParams(window.location.search);
     const dataUrl = urlParams.get('data');
 
     if (dataUrl) {
-        // Auto-load data from the specified URL
-        fetch(dataUrl)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                return response.json();
-            })
-            .then(data => {
-                window.scanData = data;
-                validateAndDisplayData(data);
-            })
-            .catch(error => {
-                console.error('Error loading data:', error);
-                showError(`Error loading data: ${error.message}`);
-            });
-    }
-
-    // Check if we have data in localStorage
-    const storedData = localStorage.getItem('unitasData');
-    if (storedData && !dataUrl) {
-        try {
-            const data = JSON.parse(storedData);
-            window.scanData = data;
-            validateAndDisplayData(data);
-        } catch (error) {
-            console.error('Error loading stored data:', error);
-            localStorage.removeItem('unitasData');
-        }
+        tryLoadFromUrl(dataUrl);
     }
 }
 
@@ -387,215 +370,122 @@ function setupShortcutsPanel() {
 // Setup table sorting functionality
 function setupTableSorting() {
     document.querySelectorAll('th.sortable').forEach(header => {
-        header.addEventListener('click', function() {
+        header.addEventListener('click', function () {
             const table = this.closest('table');
             const tbody = table.querySelector('tbody');
-            const rows = Array.from(tbody.querySelectorAll('tr'));
             const sortField = this.dataset.sort;
-            const currentSort = this.classList.contains('sort-asc') ? 'asc' : 
-                               this.classList.contains('sort-desc') ? 'desc' : null;
-            
+            const currentSort = this.classList.contains('sort-asc') ? 'asc' :
+                this.classList.contains('sort-desc') ? 'desc' : null;
+
             // Remove sort classes from all headers in this table
             table.querySelectorAll('th.sortable').forEach(h => {
                 h.classList.remove('sort-asc', 'sort-desc');
             });
-            
-            // Determine new sort direction
-            let newSort = 'asc';
-            if (currentSort === 'asc') {
-                newSort = 'desc';
-            }
-            
-            // Add sort class to current header
+
+            const newSort = currentSort === 'asc' ? 'desc' : 'asc';
             this.classList.add(newSort === 'asc' ? 'sort-asc' : 'sort-desc');
-            
-            // Sort rows
-            rows.sort((a, b) => {
-                let aVal = getSortValue(a, sortField);
-                let bVal = getSortValue(b, sortField);
-                
-                // Handle different data types
-                if (sortField === 'port' || sortField === 'count') {
-                    aVal = parseInt(aVal) || 0;
-                    bVal = parseInt(bVal) || 0;
-                } else if (sortField === 'ip') {
-                    aVal = ipToNumber(aVal);
-                    bVal = ipToNumber(bVal);
+
+            // Decorate once, then sort primitives. Reading the cells inside the
+            // comparator meant a querySelectorAll, a closest() and a textContent
+            // per comparison, i.e. O(n log n) DOM queries for one click.
+            const numeric = sortField === 'port' || sortField === 'count';
+            const isIp = sortField === 'ip';
+            const rows = [];
+            for (const row of tbody.rows) {
+                if (row === table._noMatchRow || row.classList.contains('group-row')) continue;
+                if (row.querySelector('.empty-message')) continue;
+                let key = getSortValue(row, sortField);
+                if (numeric) {
+                    key = parseInt(key, 10) || 0;
+                } else if (isIp) {
+                    key = ipSortKey(key);
                 } else {
-                    aVal = aVal.toLowerCase();
-                    bVal = bVal.toLowerCase();
+                    key = key.toLowerCase();
                 }
-                
-                if (aVal < bVal) return newSort === 'asc' ? -1 : 1;
-                if (aVal > bVal) return newSort === 'asc' ? 1 : -1;
-                return 0;
-            });
-            
-            // Re-append sorted rows
-            rows.forEach(row => tbody.appendChild(row));
+                rows.push({ row, key });
+            }
+
+            const direction = newSort === 'asc' ? 1 : -1;
+            const compare = (a, b) => (a.key < b.key ? -direction : a.key > b.key ? direction : 0);
+
+            // While grouped, a global sort would scatter the rows across their
+            // headers; each group is sorted inside itself instead.
+            const grouped = typeof groupingActive === 'function' && groupingActive();
+            if (grouped) {
+                const byGroup = new Map();
+                rows.forEach(entry => {
+                    const key = entry.row.dataset.group || '';
+                    if (!byGroup.has(key)) byGroup.set(key, []);
+                    byGroup.get(key).push(entry);
+                });
+                byGroup.forEach(members => members.sort(compare));
+
+                const placeholder = document.createComment('sorting');
+                tbody.replaceWith(placeholder);
+                for (const header of tbody.querySelectorAll('tr.group-row')) {
+                    const members = byGroup.get(header.dataset.groupHeader) || [];
+                    let previous = header;
+                    members.forEach(entry => {
+                        previous.after(entry.row);
+                        previous = entry.row;
+                    });
+                }
+                placeholder.replaceWith(tbody);
+                return;
+            }
+
+            rows.sort(compare);
+
+            // detach while re-ordering: moving rows inside a live table makes
+            // the engine re-check the layout of the whole table each time
+            const placeholder = document.createComment('sorting');
+            tbody.replaceWith(placeholder);
+            const fragment = document.createDocumentFragment();
+            rows.forEach(entry => fragment.appendChild(entry.row));
+            tbody.appendChild(fragment);
+            placeholder.replaceWith(tbody);
         });
     });
 }
+
+// The triage tables lead with the selection checkbox, so their data starts at
+// column 1.
+const SORT_FIELDS = {
+    'hosts-table': { ip: 1, hostname: 2, mac: 3, vendor: 4, ports: 5 },
+    'ports-table': { ip: 1, hostname: 2, port: 3, protocol: 4, service: 5 },
+    'services-table': { service: 0, count: 1, hosts: 2 },
+    'up-hosts-table': { ip: 0, reason: 1 }
+};
 
 // Get sort value from table row
 function getSortValue(row, field) {
-    const cells = row.querySelectorAll('td');
-    const tableId = row.closest('table').id;
-    
-    switch(tableId) {
-        case 'hosts-table':
-            const hostsFieldMap = { ip: 0, hostname: 1, mac: 2, vendor: 3, ports: 4 };
-            return cells[hostsFieldMap[field]]?.textContent.trim() || '';
-        case 'ports-table':
-            const portsFieldMap = { ip: 0, hostname: 1, port: 2, protocol: 3, service: 4, status: 5, comment: 6 };
-            return cells[portsFieldMap[field]]?.textContent.trim() || '';
-        case 'services-table':
-            const servicesFieldMap = { service: 0, count: 1, hosts: 2 };
-            return cells[servicesFieldMap[field]]?.textContent.trim() || '';
-        default:
-            return '';
+    // the ports table keeps everything sortable on the row itself
+    if (row.dataset[field] !== undefined) return row.dataset[field];
+    if (field === 'status') return row.dataset.state || '';
+
+    const fields = SORT_FIELDS[row.parentNode.parentNode.id];
+    if (!fields || fields[field] === undefined) return '';
+    const cell = row.cells[fields[field]];
+    return cell ? cell.textContent.trim() : '';
+}
+
+// Comparable sort key for an address. `<<` would overflow into negative
+// numbers for a first octet >= 128 and IPv6 has no numeric form here, so IPv4
+// addresses become zero padded strings and everything else is compared as text
+// behind them.
+function ipSortKey(ip) {
+    if (!ip || ip === '-') return '￿';
+    const octets = ip.split('.');
+    if (octets.length === 4 && octets.every(o => /^\d{1,3}$/.test(o))) {
+        return '0' + octets.map(o => o.padStart(3, '0')).join('.');
     }
+    return '1' + ip.toLowerCase();
 }
 
-// Convert IP address to number for proper sorting
-function ipToNumber(ip) {
-    if (!ip || ip === '-') return 0;
-    return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet), 0);
-}
-
-// Export current view as CSV
-function exportCurrentViewAsCSV() {
-    const activeView = document.querySelector('.view.active');
-    if (!activeView) return;
-
-    let csvContent = '';
-    let filename = 'unitas-export.csv';
-
-    switch(activeView.id) {
-        case 'hosts-view':
-            csvContent = exportHostsAsCSV();
-            filename = 'unitas-hosts.csv';
-            break;
-        case 'ports-view':
-            csvContent = exportPortsAsCSV();
-            filename = 'unitas-ports.csv';
-            break;
-        case 'services-view':
-            csvContent = exportServicesAsCSV();
-            filename = 'unitas-services.csv';
-            break;
-        case 'up-hosts-view':
-            csvContent = exportUpHostsAsCSV();
-            filename = 'unitas-up-hosts.csv';
-            break;
-        default:
-            showError('CSV export not available for this view');
-            return;
-    }
-
-    if (csvContent) {
-        downloadCSV(csvContent, filename);
-    }
-}
-
-// Export hosts table as CSV
-function exportHostsAsCSV() {
-    if (!window.scanData || !window.scanData.hosts) return '';
-    
-    const headers = ['IP', 'Hostname', 'MAC Address', 'Vendor', 'Open Ports'];
-    let csv = headers.join(',') + '\n';
-    
-    Object.values(window.scanData.hosts).forEach(host => {
-        const ports = host.ports.map(p => `${p.port}/${p.protocol}(${p.service})`).join(';');
-        const row = [
-            `"${host.ip}"`,
-            `"${host.hostname || ''}"`,
-            `"${host.mac_address || ''}"`,
-            `"${host.vendor || ''}"`,
-            `"${ports}"`
-        ];
-        csv += row.join(',') + '\n';
-    });
-    
-    return csv;
-}
-
-// Export ports table as CSV
-function exportPortsAsCSV() {
-    if (!window.scanData || !window.scanData.hosts) return '';
-    
-    const headers = ['IP', 'Hostname', 'Port', 'Protocol', 'Service', 'Status', 'Comment'];
-    let csv = headers.join(',') + '\n';
-    
-    Object.values(window.scanData.hosts).forEach(host => {
-        host.ports.forEach(port => {
-            const row = [
-                `"${host.ip}"`,
-                `"${host.hostname || ''}"`,
-                `"${port.port}"`,
-                `"${port.protocol}"`,
-                `"${port.service}"`,
-                `"${port.state || 'TBD'}"`,
-                `"${port.comment || ''}"`
-            ];
-            csv += row.join(',') + '\n';
-        });
-    });
-    
-    return csv;
-}
-
-// Export services table as CSV
-function exportServicesAsCSV() {
-    if (!window.scanData || !window.scanData.hosts) return '';
-    
-    const serviceMap = new Map();
-    
-    Object.values(window.scanData.hosts).forEach(host => {
-        host.ports.forEach(port => {
-            const service = port.service;
-            if (!serviceMap.has(service)) {
-                serviceMap.set(service, { count: 0, hosts: new Set() });
-            }
-            serviceMap.get(service).count++;
-            serviceMap.get(service).hosts.add(host.ip);
-        });
-    });
-    
-    const headers = ['Service', 'Count', 'Hosts'];
-    let csv = headers.join(',') + '\n';
-    
-    Array.from(serviceMap.entries())
-        .sort((a, b) => b[1].count - a[1].count)
-        .forEach(([service, data]) => {
-            const hosts = Array.from(data.hosts).join(';');
-            const row = [
-                `"${service}"`,
-                `"${data.count}"`,
-                `"${hosts}"`
-            ];
-            csv += row.join(',') + '\n';
-        });
-    
-    return csv;
-}
-
-// Export up hosts table as CSV
-function exportUpHostsAsCSV() {
-    if (!window.scanData || !window.scanData.upHosts) return '';
-    
-    const headers = ['IP', 'Reason'];
-    let csv = headers.join(',') + '\n';
-    
-    Object.entries(window.scanData.upHosts).forEach(([ip, reason]) => {
-        const row = [
-            `"${ip}"`,
-            `"${reason}"`
-        ];
-        csv += row.join(',') + '\n';
-    });
-    
-    return csv;
+function compareIps(a, b) {
+    const keyA = ipSortKey(a);
+    const keyB = ipSortKey(b);
+    return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
 }
 
 // Download CSV file

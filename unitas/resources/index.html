@@ -5,15 +5,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Unitas Network Scan Viewer</title>
+    <!-- Defence in depth: the scan data comes from the scanned hosts. Inline
+         script and style are how the single file report works, but nothing may
+         be loaded from or sent to anywhere else, so an injected payload cannot
+         reach the network. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none';
+        script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
+        img-src 'self' data:; font-src 'self' data:; connect-src 'self';
+        base-uri 'none'; form-action 'none'">
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23263544'/%3E%3Ccircle cx='16' cy='9' r='3.4' fill='%232f7fd1'/%3E%3Ccircle cx='8' cy='23' r='3.4' fill='%232f9e5f'/%3E%3Ccircle cx='24' cy='23' r='3.4' fill='%23d98324'/%3E%3Cpath d='M16 12.4 8 19.6M16 12.4l8 7.2M8 23h16' stroke='%239fb0c0' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="static/css/styles.css">
-    <!-- External Libraries -->
-    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <script src="https://unpkg.com/vis-data/standalone/umd/vis-data.min.js"></script>
+    <script>
+        // Applied before first paint so the page never flashes the light theme.
+        (function () {
+            try {
+                var stored = localStorage.getItem('unitasTheme');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.setAttribute('data-theme', stored);
+                }
+            } catch (e) { /* storage can be blocked, the media query still applies */ }
+        })();
+    </script>
+    <!-- Vendored so the viewer also works on an isolated network. The
+         standalone bundle contains vis-data. -->
+    <script src="static/js/vis-network.min.js"></script>
 </head>
 
 <body>
     <header>
-        <h1>Unitas Network Scan Viewer</h1>
+        <div class="brand">
+            <h1>Unitas</h1>
+            <span class="brand-tag">Network Scan Viewer</span>
+        </div>
+        <div class="header-actions">
+            <button id="theme-toggle" class="icon-button" type="button" aria-pressed="false"
+                title="Toggle dark mode (T)">Dark mode</button>
+        </div>
     </header>
     <div class="container">
         <!-- Initial screen for loading data -->
@@ -28,7 +56,9 @@
                 </div>
             </div>
             <p id="error-message" class="error-message hidden"></p>
-            <p>Generate JSON files with: <code>unitas /path/to/scan/folder --json -o output.json</code></p>
+            <p>Generate JSON files with: <code>unitas /path/to/scan/folder --json</code> (writes
+                <code>unitas.json</code>), or open the viewer directly with <code>unitas /path/to/scan/folder -H</code>
+            </p>
         </div>
 
         <!-- Data view (initially hidden) -->
@@ -39,8 +69,31 @@
             </div>
 
             <div class="data-controls">
-                <button id="reload-btn" class="reload-btn">Load Different File</button>
+                <div class="control-group">
+                    <button id="reload-btn" class="reload-btn">Load Different File</button>
+                    <span id="edit-count" class="edit-count"></span>
+                    <button id="reset-edits-btn" class="reload-btn" disabled>Reset Edits</button>
+                    <button id="rescan-btn" class="reload-btn hidden" title="Re-read the scan folder now">Rescan Folder</button>
+                    <span id="nessus-panel" class="nessus-panel hidden">
+                        <span id="nessus-count" class="nessus-count"></span>
+                        <button id="nessus-export-btn" class="reload-btn" type="button">Export from Nessus</button>
+                    </span>
+                </div>
                 <div class="export-controls">
+                    <div class="menu" id="copy-menu">
+                        <button id="copy-menu-btn" class="export-btn csv-btn" type="button" aria-haspopup="true"
+                            aria-expanded="false">Copy Visible</button>
+                        <div class="menu-panel hidden" id="copy-menu-panel" role="menu">
+                            <button type="button" role="menuitem" data-copy="urls-web">Web URLs
+                                (http/https)</button>
+                            <button type="button" role="menuitem" data-copy="urls-all">URLs (service as
+                                scheme)</button>
+                            <button type="button" role="menuitem" data-copy="ip-port">IP:port</button>
+                            <button type="button" role="menuitem" data-copy="ips">IP addresses</button>
+                            <button type="button" role="menuitem" data-copy="nmap">nmap re-scan command</button>
+                        </div>
+                    </div>
+                    <button id="export-state-btn" class="export-btn">Export state.md</button>
                     <button id="export-markdown-btn" class="export-btn">Export as Markdown</button>
                     <button id="export-csv-btn" class="export-btn csv-btn">Export Current View as CSV</button>
                 </div>
@@ -66,9 +119,12 @@
             </div>
 
             <div class="search-container">
-                <input type="text" id="search" placeholder="Search for hosts, ports, services... (Press / or Ctrl+F)">
-                <div class="keyboard-shortcuts-hint">
-                    <span class="shortcuts-toggle" id="shortcuts-toggle">⌨️ Shortcuts</span>
+                <input type="text" id="search" aria-label="Search hosts, ports and services"
+                    placeholder="Search, or filter with service:smb port:445 state:tbd net:10.31. -printer (/ to focus)">
+                <div class="search-meta">
+                    <span class="result-count" id="result-count"></span>
+                    <div class="keyboard-shortcuts-hint">
+                    <span class="shortcuts-toggle" id="shortcuts-toggle" role="button" tabindex="0">Shortcuts</span>
                     <div class="shortcuts-panel hidden" id="shortcuts-panel">
                         <div class="shortcuts-header">Keyboard Shortcuts</div>
                         <div class="shortcut-item"><kbd>/</kbd> or <kbd>Ctrl+F</kbd> - Focus search</div>
@@ -76,25 +132,50 @@
                         <div class="shortcut-item"><kbd>1-5</kbd> - Switch views</div>
                         <div class="shortcut-item"><kbd>Ctrl+R</kbd> - Reload data</div>
                         <div class="shortcut-item"><kbd>Ctrl+E</kbd> - Export markdown</div>
+                        <div class="shortcut-item"><kbd>T</kbd> - Toggle dark mode</div>
+                        <div class="shortcuts-header">Triage (Ports and Hosts)</div>
+                        <div class="shortcut-item"><kbd>j</kbd> / <kbd>k</kbd> - Move the cursor</div>
+                        <div class="shortcut-item"><kbd>x</kbd> - Select the row (<kbd>Shift</kbd> extends)</div>
+                        <div class="shortcut-item"><kbd>d</kbd> / <kbd>p</kbd> / <kbd>u</kbd> - Mark Done / In progress / TBD</div>
+                        <div class="shortcut-item"><kbd>n</kbd> - Edit the note</div>
+                        <div class="shortcut-item"><kbd>g</kbd> - Group by nothing / service / subnet</div>
+                        <div class="shortcut-item">Search: <code>service:</code> <code>port:</code>
+                            <code>state:</code> <code>net:</code> <code>comment:</code>, <code>-</code> negates</div>
+                    </div>
                     </div>
                 </div>
             </div>
 
-            <div class="nav">
-                <div class="nav-item active" data-view="hosts-view">Hosts</div>
-                <div class="nav-item" data-view="ports-view">Ports</div>
-                <div class="nav-item" data-view="services-view">Services</div>
-                <div class="nav-item" data-view="up-hosts-view">Up Hosts</div>
-                <div class="nav-item" data-view="graph-view">Network Graph</div>
+            <div class="nav" role="tablist">
+                <button type="button" class="nav-item active" role="tab" aria-selected="true"
+                    aria-controls="hosts-view" data-view="hosts-view">Hosts</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="ports-view" data-view="ports-view">Ports</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="services-view" data-view="services-view">Services</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="up-hosts-view" data-view="up-hosts-view">Up Hosts</button>
+                <button type="button" class="nav-item" role="tab" aria-selected="false"
+                    aria-controls="graph-view" data-view="graph-view">Network Graph</button>
             </div>
 
             <div id="hosts-view" class="view active">
                 <div class="panel">
                     <h2>Hosts with Open Ports</h2>
+                    <div id="hosts-batch" class="batch-bar hidden">
+                        <span id="hosts-batch-count" class="batch-count"></span>
+                        <span class="batch-label">Mark every port as</span>
+                        <button type="button" class="batch-btn" data-mark="TBD">TBD</button>
+                        <button type="button" class="batch-btn" data-mark="In progress">In progress</button>
+                        <button type="button" class="batch-btn" data-mark="Done">Done</button>
+                        <button type="button" class="batch-btn batch-clear" data-clear>Clear selection</button>
+                    </div>
                     <div class="table-container">
                         <table id="hosts-table">
                             <thead>
                                 <tr>
+                                    <th class="select-col"><input type="checkbox" data-select-all
+                                        aria-label="Select every visible host"></th>
                                     <th class="sortable" data-sort="ip">IP <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="hostname">Hostname <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="mac">MAC Address <span class="sort-indicator"></span></th>
@@ -114,12 +195,30 @@
                     <div class="status-filter">
                         <button class="status-btn active" data-status="all">All</button>
                         <button class="status-btn" data-status="tbd">TBD</button>
+                        <button class="status-btn" data-status="in progress">In progress</button>
                         <button class="status-btn" data-status="done">Done</button>
+                        <label class="group-select">Group by
+                            <select id="group-by" class="filter-select">
+                                <option value="none">nothing</option>
+                                <option value="service">service</option>
+                                <option value="subnet">subnet</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div id="ports-batch" class="batch-bar hidden">
+                        <span id="ports-batch-count" class="batch-count"></span>
+                        <span class="batch-label">Mark as</span>
+                        <button type="button" class="batch-btn" data-mark="TBD">TBD</button>
+                        <button type="button" class="batch-btn" data-mark="In progress">In progress</button>
+                        <button type="button" class="batch-btn" data-mark="Done">Done</button>
+                        <button type="button" class="batch-btn batch-clear" data-clear>Clear selection</button>
                     </div>
                     <div class="table-container">
                         <table id="ports-table">
                             <thead>
                                 <tr>
+                                    <th class="select-col"><input type="checkbox" data-select-all
+                                        aria-label="Select every visible port"></th>
                                     <th class="sortable" data-sort="ip">IP <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="hostname">Hostname <span class="sort-indicator"></span></th>
                                     <th class="sortable" data-sort="port">Port <span class="sort-indicator"></span></th>
@@ -160,8 +259,8 @@
                         <table id="up-hosts-table">
                             <thead>
                                 <tr>
-                                    <th>IP</th>
-                                    <th>Reason</th>
+                                    <th class="sortable" data-sort="ip">IP <span class="sort-indicator"></span></th>
+                                    <th class="sortable" data-sort="reason">Reason <span class="sort-indicator"></span></th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -247,6 +346,19 @@
                                     <button id="apply-filters" class="filter-button">Apply Filters</button>
                                     <button id="reset-filters" class="reset-button">Reset</button>
                                 </div>
+                                <p id="filter-summary" class="filter-summary"></p>
+                            </div>
+                            <div class="filter-section">
+                                <h3>Saved Views</h3>
+                                <div class="tag-filter">
+                                    <select id="saved-view-select" class="filter-select">
+                                        <option value="">No saved views</option>
+                                    </select>
+                                </div>
+                                <div class="filter-actions">
+                                    <button id="load-view" class="filter-button">Load</button>
+                                    <button id="delete-view" class="reset-button">Delete</button>
+                                </div>
                             </div>
                             <div class="filter-section">
                                 <h3>Analysis Tools</h3>
@@ -277,6 +389,7 @@
                         </div>
                         <div id="graph-area">
                             <div id="graph-container"></div>
+                            <div id="graph-fallback" class="graph-fallback hidden"></div>
                             <div class="graph-options">
                                 <button id="export-png" class="graph-option-btn">Export PNG</button>
                                 <button id="save-view" class="graph-option-btn">Save View</button>
@@ -316,16 +429,22 @@
     </div>
 
     <footer>
-        Unitas Network Graph Viewer - Enhanced Visualization Tool
+        Unitas Network Scan Viewer
     </footer>
 
     <!-- Application Scripts -->
+    <script src="static/js/ui.js"></script>
+    <script src="static/js/edits.js"></script>
+    <script src="static/js/targets.js"></script>
     <script src="static/js/dataHandlers.js"></script>
     <script src="static/js/tableRenderers.js"></script>
     <script src="static/js/networkGraph.js"></script>
     <script src="static/js/filters.js"></script>
     <script src="static/js/analysis.js"></script>
+    <script src="static/js/selection.js"></script>
+    <script src="static/js/grouping.js"></script>
     <script src="static/js/app.js"></script>
+    <script src="static/js/workspace.js"></script>
 </body>
 
 </html>

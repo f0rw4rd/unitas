@@ -1,4 +1,17 @@
-// Network analysis tools
+// Hoisted out of the per-port loop it used to be declared in, where it
+// allocated one object and seven arrays for every port in the scan.
+const standardPorts = {
+    'http': [80, 8080],
+    'https': [443, 8443],
+    'ssh': [22],
+    'ftp': [21],
+    'smtp': [25],
+    'dns': [53],
+    'rdp': [3389]
+};
+
+// Network analysis tools. The results are built as markup and handed to
+// innerHTML, so every value taken from the scan goes through escapeHtml().
 function runAnalysis() {
     const analysisType = document.getElementById('analysis-type').value;
     const resultContainer = document.getElementById('analysis-result');
@@ -58,7 +71,7 @@ function findCommonServices() {
 
     commonServices.forEach(([service, count]) => {
         const percentage = Math.round((count / window.scanData.hosts.length) * 100);
-        result += `<li><strong>${service}</strong>: Found on ${count} hosts (${percentage}%)</li>`;
+        result += `<li><strong>${escapeHtml(service)}</strong>: Found on ${count} hosts (${percentage}%)</li>`;
     });
 
     result += "</ul>";
@@ -71,14 +84,14 @@ function identifyNetworkSegments() {
     Object.entries(subnetGroups)
         .sort((a, b) => b[1].hosts.size - a[1].hosts.size)
         .forEach(([subnet, data]) => {
-            result += `<li><strong>${subnet}.0/24</strong>: ${data.hosts.size} hosts`;
+            result += `<li><strong>${escapeHtml(subnet)}.0/24</strong>: ${data.hosts.size} hosts`;
 
             if (data.services.size > 0) {
                 result += `, ${data.services.size} services`;
 
                 const topServices = Array.from(data.services).slice(0, 3);
                 if (topServices.length > 0) {
-                    result += ` (${topServices.join(", ")}${data.services.size > 3 ? "..." : ""})`;
+                    result += ` (${topServices.map(escapeHtml).join(", ")}${data.services.size > 3 ? "..." : ""})`;
                 }
             }
 
@@ -113,15 +126,6 @@ function findUnusualPorts() {
             }
 
             // Track non-standard service ports
-            const standardPorts = {
-                'http': [80, 8080],
-                'https': [443, 8443],
-                'ssh': [22],
-                'ftp': [21],
-                'smtp': [25],
-                'dns': [53],
-                'rdp': [3389]
-            };
 
             const service = port.service.replace("?", "");
 
@@ -150,7 +154,7 @@ function findUnusualPorts() {
         result += "<p><strong>Unusual high ports (>10000):</strong></p><ul>";
 
         highPorts.slice(0, 10).forEach(port => {
-            result += `<li>${port.ip} - ${port.port}/${port.protocol} (${port.service})</li>`;
+            result += `<li>${escapeHtml(port.ip)} - ${escapeHtml(port.port)}/${escapeHtml(port.protocol)} (${escapeHtml(port.service)})</li>`;
         });
 
         if (highPorts.length > 10) {
@@ -164,7 +168,7 @@ function findUnusualPorts() {
         result += "<p><strong>Services on non-standard ports:</strong></p><ul>";
 
         nonStandardPorts.forEach(port => {
-            result += `<li>${port.ip} - ${port.service} on port ${port.port} (standard: ${port.standardPorts})</li>`;
+            result += `<li>${escapeHtml(port.ip)} - ${escapeHtml(port.service)} on port ${escapeHtml(port.port)} (standard: ${escapeHtml(port.standardPorts)})</li>`;
         });
 
         result += "</ul>";
@@ -172,7 +176,7 @@ function findUnusualPorts() {
 
     if (uncommonPorts.length > 0) {
         result += "<p><strong>Uncommon ports (found on only one host):</strong></p>";
-        result += `<p>${uncommonPorts.slice(0, 20).join(", ")}${uncommonPorts.length > 20 ? "..." : ""}</p>`;
+        result += `<p>${uncommonPorts.slice(0, 20).map(escapeHtml).join(", ")}${uncommonPorts.length > 20 ? "..." : ""}</p>`;
     }
 
     if (result === "") {
@@ -199,7 +203,7 @@ function findMostConnectedHosts() {
     let result = "<p><strong>Hosts by connectivity (number of open ports):</strong></p><ul>";
 
     sortedHosts.slice(0, 10).forEach(host => {
-        result += `<li><strong>${host.ip}</strong>${host.hostname ? ` (${host.hostname})` : ""}: ${host.ports} ports, ${host.services.size} unique services</li>`;
+        result += `<li><strong>${escapeHtml(host.ip)}</strong>${host.hostname ? ` (${escapeHtml(host.hostname)})` : ""}: ${host.ports} ports, ${host.services.size} unique services</li>`;
     });
 
     if (sortedHosts.length > 10) {

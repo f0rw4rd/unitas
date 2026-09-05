@@ -6,7 +6,6 @@ from typing import Dict, List, Optional, Tuple
 from xml.etree.ElementTree import ParseError
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
-import concurrent.futures
 
 from unitas.utils import service_lookup, hostup_dict, find_nmap_ip_address
 from unitas.model import HostScanData, PortDetails, merge_states
@@ -42,7 +41,7 @@ class ScanParser(ABC):
                 f'Looking in folder "{directory}" for "{ext}" files for parser {cls.__name__}'
             )
             for f in glob.glob(f"{directory}/**/*.{ext}", recursive=True):
-                logging.debug(f"Adding file {f} for parser {cls.__name__}")
+                logging.debug("Adding file %s for parser %s", f, cls.__name__)
                 try:
                     files.append(cls(f))
                 except ParseError:
@@ -59,10 +58,31 @@ class NessusParser(ScanParser):
     def get_scan_type(self) -> str:
         return "nessus"
 
-    def _parse_mac_address(self, block: ET.Element) -> Optional[str]:
+    @staticmethod
+    def _host_tags(block: ET.Element) -> Dict[str, str]:
+        """The <HostProperties> tags of a host as a plain dict."""
+        properties = block.find("HostProperties")
+        if properties is None:
+            return {}
+        return {
+            tag.attrib["name"]: tag.text
+            for tag in properties.findall("tag")
+            if "name" in tag.attrib and tag.text
+        }
+
+    def _parse_mac_address(
+        self, block: ET.Element, tags: Dict[str, str]
+    ) -> Optional[str]:
         """Extract MAC address from Nessus plugin output."""
         # Look for ping plugin (plugin ID 10180)
-        ping_item = block.find(".//ReportItem[@pluginID='10180']")
+        ping_item = next(
+            (
+                item
+                for item in block.findall("ReportItem")
+                if item.attrib.get("pluginID") == "10180"
+            ),
+            None,
+        )
         if ping_item is not None:
             plugin_output = ping_item.find("plugin_output")
             if plugin_output is not None and plugin_output.text:
@@ -76,28 +96,22 @@ class NessusParser(ScanParser):
                     return mac_match.group(1)
 
         # As a fallback, check MAC address tag
-        mac_tag = block.find(".//tag[@name='mac-address']")
-        if mac_tag is not None and mac_tag.text:
-            return mac_tag.text
-
-        return None
+        return tags.get("mac-address")
 
     def parse(self) -> Dict[str, HostScanData]:
         for block in self.root.findall(".//ReportHost"):
             name: str = block.attrib.get("name", "")
             hostname: Optional[str] = None
 
+            tags = self._host_tags(block)
+
             if HostScanData.is_valid_ip(name):
                 ip = name
-                host_blk = block.find(".//tag[@name='host-fqdn']")
-                if host_blk is not None and host_blk.text:
-                    hostname = host_blk.text
+                hostname = tags.get("host-fqdn") or None
             else:
-                ip_blk = block.find(".//tag[@name='host-ip']")
                 hostname = name
-                if ip_blk is not None and ip_blk.text:
-                    ip = ip_blk.text
-                else:
+                ip = tags.get("host-ip")
+                if not ip:
                     raise ValueError(f"Could not find IP for host {hostname}")
 
             host = HostScanData(ip)
@@ -105,17 +119,14 @@ class NessusParser(ScanParser):
                 host.set_hostname(hostname)
 
             # Extract MAC address
-            mac_address = self._parse_mac_address(block)
+            mac_address = self._parse_mac_address(block, tags)
             if mac_address:
                 host.set_mac_address(mac_address)
                 logging.debug(
                     f"Found MAC address in Nessus scan for {ip}: {mac_address}"
                 )
 
-            # both need to run, "or" would skip the port scanner plugins
-            service_items = self._parse_service_detection(block, host)
-            port_items = self._parse_port_scanners(block, host)
-            plugin_found = service_items > 0 or port_items > 0
+            plugin_found = self._parse_report_items(block, host) > 0
 
             if plugin_found and len(host.ports) == 0:
                 if not ip in hostup_dict:
@@ -188,24 +199,31 @@ class NessusParser(ScanParser):
             detected_date=self.scan_date,
         )
 
-    def _parse_service_detection(self, block: ET.Element, host: HostScanData) -> int:
-        counter = 0
-        # xml module has only limited xpath support
-        for item in [
-            b
-            for b in block.findall(".//ReportItem")
-            if b.attrib.get("pluginFamily", "Port scanners").lower()
-            not in ["port scanners", "settings"]
-        ]:
-            counter += 1
-            host.add_port_details(self._parse_service_item(item))
-        return counter
+    def _parse_report_items(self, block: ET.Element, host: HostScanData) -> int:
+        """Parse the findings of one host.
 
-    def _parse_port_scanners(self, block: ET.Element, host: HostScanData) -> int:
+        The service detection and the port scanner plugins are told apart by
+        their plugin family in a single pass; two ".//ReportItem" walks of the
+        same subtree used to cost more than everything else in the parser.
+        """
         counter = 0
-        for item in block.findall(".//ReportItem[@pluginFamily='Port scanners']"):
+        # the service scan runs first, the port scanner must not overwrite an
+        # identified service with its guess
+        port_scanner_items = []
+
+        for item in block.findall("ReportItem"):
+            family = item.attrib.get("pluginFamily", "Port scanners").lower()
+            if family == "settings":
+                continue
             counter += 1
+            if family == "port scanners":
+                port_scanner_items.append(item)
+            else:
+                host.add_port_details(self._parse_service_item(item))
+
+        for item in port_scanner_items:
             host.add_port_details(self._parse_port_item(item))
+
         return counter
 
 
@@ -219,42 +237,54 @@ class NmapParser(ScanParser):
         return "nmap"
 
     def parse(self) -> Dict[str, HostScanData]:
-        for host in self.root.findall(".//host"):
-            status = host.find(".//status")
-            if status is not None and status.attrib.get("state") == "up":
-                host_ip: str = find_nmap_ip_address(host)
-                if host_ip:
-                    h = HostScanData(ip=host_ip)
+        # All of these elements are direct children of <host>; ".//" would walk
+        # the whole subtree of every host, which is the bulk of the work on a
+        # large sweep (65k hosts with no ports).
+        for host in self.root.findall("host"):
+            status = host.find("status")
+            if status is None or status.attrib.get("state") != "up":
+                continue
 
-                    # Extract MAC address if available
-                    mac_elem = host.find(".//address[@addrtype='mac']")
-                    if mac_elem is not None:
-                        mac_address = mac_elem.attrib.get("addr", "")
-                        if mac_address:
-                            h.set_mac_address(mac_address)
-                            vendor = mac_elem.attrib.get("vendor", "")
-                            logging.debug(
-                                f"Found MAC address: {mac_address} (Vendor: {vendor})"
-                            )
+            addresses = host.findall("address")
+            host_ip: str = find_nmap_ip_address(addresses)
+            if not host_ip:
+                continue
 
-                    # Continue with existing logic
-                    self._parse_ports(host, h)
-                    if len(h.ports) == 0:
-                        if not host_ip in hostup_dict:
-                            reason = status.attrib.get("reason", "")
-                            if reason and not reason == "user-set":
-                                hostup_dict[host_ip] = reason
-                        continue
+            ports = self._parse_ports(host)
+            if not ports:
+                # a host that is up but has nothing open is only worth an entry
+                # in the host-up list, so it never becomes a HostScanData
+                if host_ip not in hostup_dict:
+                    reason = status.attrib.get("reason", "")
+                    if reason and reason != "user-set":
+                        hostup_dict[host_ip] = reason
+                continue
 
-                    self.data[host_ip] = h
+            h = HostScanData(ip=host_ip)
+            for port in ports:
+                h.add_port_details(port)
 
-                    hostnames = host.find(".//hostnames")
-                    if hostnames is not None:
-                        for x in hostnames:
-                            if "name" in x.attrib:
-                                h.set_hostname(x.attrib.get("name"))
-                                if x.attrib.get("type", "") == "user":
-                                    break
+            for address in addresses:
+                if address.attrib.get("addrtype") == "mac":
+                    mac_address = address.attrib.get("addr", "")
+                    if mac_address:
+                        h.set_mac_address(mac_address)
+                        logging.debug(
+                            "Found MAC address: %s (Vendor: %s)",
+                            mac_address,
+                            address.attrib.get("vendor", ""),
+                        )
+                    break
+
+            self.data[host_ip] = h
+
+            hostnames = host.find("hostnames")
+            if hostnames is not None:
+                for x in hostnames:
+                    if "name" in x.attrib:
+                        h.set_hostname(x.attrib.get("name"))
+                        if x.attrib.get("type", "") == "user":
+                            break
         return self.data
 
     def _parse_port_item(self, port: ET.Element) -> PortDetails:
@@ -321,12 +351,22 @@ class NmapParser(ScanParser):
             detected_date=self.scan_date,
         )
 
-    def _parse_ports(self, host: ET.Element, h: HostScanData) -> None:
-        for port in host.findall(".//port[state]"):
+    def _parse_ports(self, host: ET.Element) -> List[PortDetails]:
+        ports = host.find("ports")
+        if ports is None:
+            return []
+
+        found = []
+        for port in ports.findall("port"):
             # for some reason, doing a single xpath query fails with invalid attribute#
             # only allow open ports
-            if port.find("state[@state='open']") is not None:
-                h.add_port_details(self._parse_port_item(port))
+            state = port.find("state")
+            if state is None or state.attrib.get("state") != "open":
+                continue
+            details = self._parse_port_item(port)
+            if details is not None:
+                found.append(details)
+        return found
 
 
 def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
@@ -340,19 +380,23 @@ def parse_file(parser: ScanParser) -> Tuple[str, Dict[str, HostScanData]]:
 def parse_files_concurrently(
     parsers: List[ScanParser], max_workers: Optional[int] = None
 ) -> Dict[str, HostScanData]:
-    global_state: Dict[str, HostScanData] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_parser = {
-            executor.submit(parse_file, parser): parser for parser in parsers
-        }
-        for future in concurrent.futures.as_completed(future_to_parser):
-            parser = future_to_parser[future]
-            try:
-                _, scan_results = future.result()
-                global_state = merge_states(global_state, scan_results)
+    """Parse the scans and merge them into one state.
 
-            except Exception as exc:
-                logging.error(
-                    f"{parser.file_path} generated an exception: {exc}", exc_info=True
-                )
+    This used to run in a ThreadPoolExecutor, but every stage of the work
+    (ElementTree and the model building) holds the GIL, so the pool only added
+    contention: measured over the test corpus it was 6-12% slower than the
+    plain loop, and it wrote to the global hostup_dict from several threads.
+    max_workers is kept for callers that still pass it.
+    """
+    global_state: Dict[str, HostScanData] = {}
+
+    for parser in parsers:
+        try:
+            _, scan_results = parse_file(parser)
+            global_state = merge_states(global_state, scan_results)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.error(
+                f"{parser.file_path} generated an exception: {exc}", exc_info=True
+            )
+
     return global_state

@@ -5,7 +5,11 @@ import os
 import shutil
 import socket
 import sys
+import time
 import tempfile
+import json
+import re
+import requests
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 from concurrent.futures import ThreadPoolExecutor
@@ -20,17 +24,84 @@ from unitas import (
     NessusParser,
     search_port_or_service,
     MarkdownConvert,
+    JsonConverter,
     ThreadSafeServiceLookup,
 )
 from unitas.exporter import NessusExporter
 from unitas.merger import NessusMerger, NmapMerger
 from unitas.model import PortDetails
-from unitas.utils import find_nmap_ip_address
+from unitas.utils import (
+    WEB_PORT_HINTS,
+    TLS_PORT_HINTS,
+    find_nmap_ip_address,
+    generate_service_urls,
+)
+from unitas.report import (
+    build_single_file_report,
+    find_resources_dir,
+    _embed_json,
+    _guard_script_source,
+)
+from unitas.utils import hostup_dict
 
 
 class TestThreadSafeServiceLookup(unittest.TestCase):
     def setUp(self):
         self.service_lookup = ThreadSafeServiceLookup()
+        # These tests drive the resolver fallback, so start with an empty view
+        # of /etc/services (which the lookup normally reads once and caches).
+        self.service_lookup._known = {}
+
+    def test_known_services_are_read_once(self):
+        """The services file replaces one getservbyport call per port"""
+        lookup = ThreadSafeServiceLookup()
+        with patch.object(
+            ThreadSafeServiceLookup,
+            "_load_known_services",
+            return_value={"80tcp": "http", "443tcp": "https"},
+        ) as mock_load:
+            with patch("socket.getservbyport") as mock_getservbyport:
+                self.assertEqual(lookup.get_service_name_for_port("80"), "http")
+                self.assertEqual(lookup.get_service_name_for_port("443"), "https")
+                mock_getservbyport.assert_not_called()
+        self.assertEqual(mock_load.call_count, 1)
+
+    def test_unknown_port_falls_back_to_the_resolver(self):
+        lookup = ThreadSafeServiceLookup()
+        with patch.object(
+            ThreadSafeServiceLookup, "_load_known_services", return_value={}
+        ):
+            with patch("socket.getservbyport", return_value="weird") as mock_lookup:
+                self.assertEqual(lookup.get_service_name_for_port("12345"), "weird")
+                mock_lookup.assert_called_once_with(12345, "tcp")
+
+    def test_services_file_parsing(self):
+        lookup = ThreadSafeServiceLookup()
+        with tempfile.NamedTemporaryFile("w", suffix=".services", delete=False) as f:
+            f.write(
+                "# comment\n"
+                "http\t80/tcp\twww\n"
+                "domain\t53/udp\n"
+                "broken line\n"
+                "http\t80/tcp\t# duplicate, first one wins\n"
+            )
+            path = f.name
+        try:
+            with patch.object(ThreadSafeServiceLookup, "SERVICES_FILE", path):
+                known = lookup._load_known_services()
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(known.get("80tcp"), "http")
+        self.assertEqual(known.get("53udp"), "domain")
+        self.assertNotIn("brokentcp", known)
+
+    def test_missing_services_file_is_not_fatal(self):
+        lookup = ThreadSafeServiceLookup()
+        with patch.object(
+            ThreadSafeServiceLookup, "SERVICES_FILE", "/nonexistent/services"
+        ):
+            self.assertEqual(lookup._load_known_services(), {})
 
     def test_valid_port_lookup(self):
         """Test lookup with a valid port number"""
@@ -110,6 +181,7 @@ class TestThreadSafeServiceLookup(unittest.TestCase):
                 "8080", default_service="custom-service"
             )
             self.assertEqual(result, "custom-service")
+            mock_getservbyport.assert_called_once()
 
 
 class TestNmapParser(unittest.TestCase):
@@ -1031,6 +1103,113 @@ class TestNessusExporter(unittest.TestCase):
         mock_sleep.assert_called_once_with(5)
         self.assertEqual(exporter.ses.get.call_count, 2)
 
+    def test_a_stuck_export_gives_up_instead_of_polling_forever(self):
+        exporter = self._make_exporter()
+        exporter.ses = MagicMock()
+        exporter.ses.get.return_value.json.return_value = {"status": "loading"}
+
+        # the clock is what ends this, not the number of polls
+        clock = iter([0, 10, 10 + exporter.EXPORT_DEADLINE])
+        with patch("unitas.exporter.time.sleep"), patch(
+            "unitas.exporter.time.monotonic", side_effect=lambda: next(clock)
+        ):
+            with self.assertRaises(TimeoutError) as raised:
+                exporter._check_export_status(15, 42)
+
+        self.assertIn("loading", str(raised.exception))
+
+    def test_every_request_carries_a_timeout(self):
+        """A Nessus that accepts the connection and then says nothing used to
+        hang the export forever."""
+        # the session is wrapped in the constructor, so the patch goes first
+        with patch.object(requests.Session, "request") as request:
+            exporter = self._make_exporter()
+            request.return_value.json.return_value = {"file": 7}
+            exporter._initiate_export(15)
+
+        self.assertEqual(
+            request.call_args.kwargs["timeout"], NessusExporter.REQUEST_TIMEOUT
+        )
+
+    def test_one_broken_scan_does_not_abandon_the_rest(self):
+        exporter = self._make_exporter()
+        exporter._list_scans = MagicMock(
+            return_value=[
+                {"id": 1, "name": "first"},
+                {"id": 2, "name": "second"},
+                {"id": 3, "name": "third"},
+            ]
+        )
+        exporter._initiate_export = MagicMock(
+            side_effect=[RuntimeError("403"), 20, TimeoutError("stuck")]
+        )
+        exporter._check_export_status = MagicMock()
+        exporter._download_export = MagicMock()
+
+        with tempfile.TemporaryDirectory() as folder:
+            exporter.export(folder)
+
+        # the second scan still downloaded despite the first and third failing
+        self.assertEqual(exporter._download_export.call_count, 1)
+        self.assertEqual(exporter._initiate_export.call_count, 3)
+
+
+class TestNessusScanStatus(unittest.TestCase):
+    """The "N of M exported" counter the web interface shows."""
+
+    SCANS = {
+        "scans": [
+            {"id": 1, "name": "external net", "status": "completed"},
+            {"id": 2, "name": "running one", "status": "running"},
+            {"id": 3, "name": "merged", "status": "completed"},
+        ]
+    }
+
+    def _make_exporter(self):
+        with patch("unitas.exporter.config") as mock_config:
+            mock_config.get_access_key.return_value = "access"
+            mock_config.get_secret_key.return_value = "secret"
+            mock_config.get_url.return_value = "https://nessus:8834"
+            exporter = NessusExporter()
+        exporter.ses = MagicMock()
+        exporter.ses.get.return_value.json.return_value = self.SCANS
+        return exporter
+
+    def test_running_scans_and_merged_are_not_counted_as_missing(self):
+        exporter = self._make_exporter()
+
+        with tempfile.TemporaryDirectory() as folder:
+            status = exporter.list_scans_status(folder)
+
+        self.assertEqual(status["total"], 3)
+        self.assertEqual(status["skipped"], 2)
+        self.assertEqual(status["missing"], 1)
+        self.assertEqual(status["exported"], 0)
+
+    def test_a_file_already_in_the_folder_counts(self):
+        exporter = self._make_exporter()
+
+        with tempfile.TemporaryDirectory() as folder:
+            # the name export() would write it under
+            with open(
+                os.path.join(folder, "external_net_1.nessus"), "w", encoding="utf-8"
+            ) as f:
+                f.write("<NessusClientData_v2/>")
+            status = exporter.list_scans_status(folder)
+
+        self.assertEqual(status["exported"], 1)
+        self.assertEqual(status["missing"], 0)
+
+    def test_is_configured_does_not_raise_on_missing_keys(self):
+        with patch("unitas.exporter.config") as mock_config:
+            mock_config.get_access_key.return_value = ""
+            mock_config.get_secret_key.return_value = ""
+            self.assertFalse(NessusExporter.is_configured())
+
+            mock_config.get_access_key.return_value = "access"
+            mock_config.get_secret_key.return_value = "secret"
+            self.assertTrue(NessusExporter.is_configured())
+
 
 class TestNessusPortScannerParsing(unittest.TestCase):
     """The port scanner plugins have their own family and must not be treated
@@ -1205,5 +1384,443 @@ class TestSearchPortOrService(unittest.TestCase):
         self.assertEqual(result, ["10.0.0.9"])
 
 
+class TestServiceUrls(unittest.TestCase):
+    def setUp(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("80", "tcp", "TBD", "http")
+        host.add_port("443", "tcp", "TBD", "https")
+        host.add_port("22", "tcp", "TBD", "ssh")
+        host.add_port("161", "udp", "TBD", "snmp")
+        # only port scanned, but a well known web port
+        host.add_port("8080", "tcp", "TBD", "unknown?")
+        # TLS, but not a web service
+        host.add_port("3389", "tcp", "TBD", "msrdp", "TLS")
+        # web service tagged as TLS by the scanner
+        host.add_port("7002", "tcp", "TBD", "http", "TLS")
+
+        ipv6_host = HostScanData("::1")
+        ipv6_host.add_port("8000", "tcp", "TBD", "http")
+
+        self.state = {"10.0.0.1": host, "::1": ipv6_host}
+
+    def test_web_mode_only_returns_http_services(self):
+        urls = generate_service_urls(self.state)
+        self.assertEqual(
+            urls,
+            [
+                "http://10.0.0.1:80",
+                "https://10.0.0.1:443",
+                "https://10.0.0.1:7002",
+                "http://10.0.0.1:8080",
+                "http://[::1]:8000",
+            ],
+        )
+
+    def test_all_mode_uses_the_service_as_scheme(self):
+        urls = generate_service_urls(self.state, "all")
+        self.assertIn("ssh://10.0.0.1:22", urls)
+        self.assertIn("snmp://10.0.0.1:161", urls)
+        self.assertIn("msrdp://10.0.0.1:3389", urls)
+        # a port without an identified service has no scheme to use
+        self.assertNotIn("unknown://10.0.0.1:8080", urls)
+
+    def test_uncertain_services_keep_their_scheme(self):
+        host = HostScanData("10.0.0.2")
+        host.add_port("8443", "tcp", "TBD", "https?")
+        host.add_port("8081", "tcp", "TBD", "http-alt?")
+        urls = generate_service_urls({"10.0.0.2": host})
+        self.assertEqual(urls, ["http://10.0.0.2:8081", "https://10.0.0.2:8443"])
+
+    def test_duplicates_are_removed(self):
+        host = HostScanData("10.0.0.3")
+        host.add_port("443", "tcp", "TBD", "https")
+        host.add_port("443", "udp", "TBD", "https")
+        self.assertEqual(
+            generate_service_urls({"10.0.0.3": host}), ["https://10.0.0.3:443"]
+        )
+
+    def test_mixed_ip_versions_do_not_break_sorting(self):
+        # sorting IPv4 against IPv6 with ip_address() raises a TypeError
+        urls = generate_service_urls(self.state)
+        self.assertEqual(urls[-1], "http://[::1]:8000")
+
+
+class TestMixedIpVersionState(unittest.TestCase):
+    def test_markdown_handles_ipv4_and_ipv6(self):
+        v4 = HostScanData("10.0.0.1")
+        v4.add_port("80", "tcp", "TBD", "http")
+        v6 = HostScanData("fe80::1")
+        v6.add_port("80", "tcp", "TBD", "http")
+        content = MarkdownConvert({"10.0.0.1": v4, "fe80::1": v6}).convert()
+        self.assertIn("10.0.0.1", content)
+        self.assertIn("fe80::1", content)
+
+
+class TestMarkdownEscaping(unittest.TestCase):
+    def test_pipes_survive_a_round_trip(self):
+        host = HostScanData("10.0.0.1")
+        host.set_hostname("we|ird")
+        host.add_port("80", "tcp", "Done", "http", "pipe | test")
+
+        document = MarkdownConvert({"10.0.0.1": host}).convert(True)
+        self.assertIn("we\\|ird", document)
+
+        parsed = MarkdownConvert().parse(document)
+        self.assertEqual(parsed["10.0.0.1"].hostname, "we|ird")
+        self.assertEqual(parsed["10.0.0.1"].ports[0].comment, "pipe | test")
+        self.assertEqual(parsed["10.0.0.1"].ports[0].state, "Done")
+
+    def test_pipes_survive_with_the_source_column(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port(
+            "443", "tcp", "TBD", "https", "a | b", source_type="nmap", source_file="s.xml"
+        )
+        document = MarkdownConvert({"10.0.0.1": host}, show_origin=True).convert(True)
+        parsed = MarkdownConvert(show_origin=True).parse(document)
+        port = parsed["10.0.0.1"].ports[0]
+        self.assertEqual(port.comment, "a | b")
+        self.assertEqual(port.sources[0]["type"], "nmap")
+        self.assertEqual(port.sources[0]["file"], "s.xml")
+
+
+class TestSingleFileReport(unittest.TestCase):
+    def setUp(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("443", "tcp", "TBD", "https")
+        self.json_content = JsonConverter({"10.0.0.1": host}).convert()
+
+    def test_report_inlines_everything(self):
+        report = build_single_file_report(self.json_content)
+
+        # no external or relative references are left
+        self.assertNotIn('<script src="http', report)
+        self.assertNotIn('<script src="static/', report)
+        self.assertNotIn('<link rel="stylesheet"', report)
+
+        # the assets and the data are in the document
+        self.assertIn("--surface", report)  # a css custom property
+        self.assertIn("function populateTables", report)
+        self.assertIn("window.scanData =", report)
+        self.assertIn("10.0.0.1", report)
+        self.assertIn("validateAndDisplayData(window.scanData)", report)
+
+    def test_report_ships_the_graph_library(self):
+        report = build_single_file_report(self.json_content)
+        self.assertIn("vis-network", report)
+
+    def test_missing_resources_raise(self):
+        with self.assertRaises(FileNotFoundError):
+            build_single_file_report(self.json_content, resources_dir="/nonexistent")
+
+
+class TestTargetRulesStayInSync(unittest.TestCase):
+    """The viewer repeats the URL rules in JS; keep the port tables identical."""
+
+    def _js_list(self, name, content):
+        match = re.search(name + r"\s*=\s*\[(.*?)\]", content, re.S)
+        self.assertIsNotNone(match, f"{name} not found in targets.js")
+        return {value.strip().strip('"') for value in match.group(1).split(",") if value.strip()}
+
+    def test_port_hints_match_the_python_rules(self):
+        targets_js = os.path.join(
+            find_resources_dir(), "static", "js", "targets.js"
+        )
+        with open(targets_js, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertEqual(self._js_list("WEB_PORT_HINTS", content), WEB_PORT_HINTS)
+        self.assertEqual(self._js_list("TLS_PORT_HINTS", content), TLS_PORT_HINTS)
+
+
+class TestPortIndexPerformance(unittest.TestCase):
+    """add_port_details used to scan the port list per insert, so a host that
+    answers on every port took over a minute to parse."""
+
+    def test_many_ports_on_one_host_are_added_quickly(self):
+        host = HostScanData("10.0.0.1")
+        start = time.perf_counter()
+        for number in range(1, 20001):
+            host.add_port(str(number), "tcp", "TBD", "unknown?")
+        elapsed = time.perf_counter() - start
+
+        self.assertEqual(len(host.ports), 20000)
+        # measured at ~0.05s; the linear scan needed ~6s for the same loop
+        self.assertLess(elapsed, 2.0, f"adding 20k ports took {elapsed:.1f}s")
+
+    def test_duplicate_ports_still_merge(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("80", "tcp", "TBD", "unknown?", source_type="nmap")
+        host.add_port("80", "tcp", "TBD", "http", source_type="nessus")
+        host.add_port("80", "udp", "TBD", "unknown?")
+
+        self.assertEqual(len(host.ports), 2)
+        tcp = next(p for p in host.ports if p.protocol == "tcp")
+        self.assertEqual(tcp.service, "http")
+        self.assertEqual({s["type"] for s in tcp.sources}, {"nmap", "nessus"})
+
+    def test_the_index_follows_a_port_list_assignment(self):
+        host = HostScanData("10.0.0.1")
+        host.add_port("80", "tcp")
+        host.add_port("443", "tcp")
+
+        # filter_uncertain_services and merge_states both assign to .ports
+        host.ports = [p for p in host.ports if p.port == "443"]
+        host.add_port("443", "tcp", service="https")
+        host.add_port("80", "tcp")
+
+        self.assertEqual(sorted(p.port for p in host.ports), ["443", "80"])
+
+    def test_from_dict_keeps_the_index_consistent(self):
+        data = {
+            "ip": "10.0.0.1",
+            "hostname": "h",
+            "ports": [
+                {"port": "80", "protocol": "tcp", "state": "TBD", "service": "http"},
+                {"port": "80", "protocol": "tcp", "state": "TBD", "service": "http"},
+            ],
+        }
+        host = HostScanData.from_dict(data)
+        self.assertEqual(len(host.ports), 1)
+        host.add_port("80", "tcp")
+        self.assertEqual(len(host.ports), 1)
+
+
+class TestNmapSweepParsing(unittest.TestCase):
+    """A ping sweep is mostly hosts without ports; they must not each build a
+    HostScanData, and the elements are looked up as direct children."""
+
+    def test_up_hosts_without_ports_are_recorded_not_built(self):
+        hostup_dict.clear()
+        xml = (
+            b'<nmaprun>'
+            b'<host><status state="up" reason="echo-reply"/>'
+            b'<address addr="10.0.0.1" addrtype="ipv4"/></host>'
+            b'<host><status state="down" reason="no-response"/>'
+            b'<address addr="10.0.0.2" addrtype="ipv4"/></host>'
+            b'<host><status state="up" reason="syn-ack"/>'
+            b'<address addr="00:11:22:33:44:55" addrtype="mac" vendor="X"/>'
+            b'<address addr="10.0.0.3" addrtype="ipv4"/>'
+            b'<ports><port protocol="tcp" portid="22"><state state="open"/>'
+            b'<service name="ssh"/></port>'
+            b'<port protocol="tcp" portid="23"><state state="closed"/></port>'
+            b'</ports></host>'
+            b'</nmaprun>'
+        )
+        parser = NmapParser.__new__(NmapParser)
+        parser.file_path = "mem"
+        parser.file_name = "mem.xml"
+        parser.scan_date = ""
+        parser.data = {}
+        parser.root = ET.fromstring(xml)
+
+        result = parser.parse()
+
+        self.assertEqual(list(result), ["10.0.0.3"])
+        self.assertEqual([p.port for p in result["10.0.0.3"].ports], ["22"])
+        self.assertEqual(result["10.0.0.3"].mac_address, "00:11:22:33:44:55")
+        self.assertEqual(hostup_dict.get("10.0.0.1"), "echo-reply")
+        self.assertNotIn("10.0.0.2", hostup_dict)
+        hostup_dict.clear()
+
+
+class TestReportEscaping(unittest.TestCase):
+    """Scan data is written by the scanned hosts; it must not be able to end the
+    inline script of a report that gets handed to somebody else."""
+
+    PAYLOADS = [
+        "</script><img src=x onerror=alert(1)>",
+        "</SCRIPT >",
+        "</ScRiPt",
+        "<!--<script>",
+        "plain < angle",
+    ]
+
+    def test_embedded_json_has_no_parser_visible_angle_bracket(self):
+        for payload in self.PAYLOADS:
+            with self.subTest(payload=payload):
+                embedded = _embed_json({"service": payload})
+                self.assertNotIn("<", embedded)
+                # and it is still the same string after JSON.parse
+                self.assertEqual(json.loads(embedded)["service"], payload)
+
+    def test_inlined_script_source_guard_is_case_insensitive(self):
+        guarded = _guard_script_source('a = "</SCRIPT >"; b = "</script>"; c = "</ScRiPt";')
+        self.assertNotIn("</SCRIPT", guarded)
+        self.assertNotIn("</script", guarded)
+        self.assertNotIn("</ScRiPt", guarded)
+        self.assertIn("<\\/SCRIPT >", guarded)
+
+    def test_report_with_a_hostile_banner_stays_intact(self):
+        host = HostScanData("10.0.0.1")
+        host.set_hostname("</script><img src=x onerror=alert(1)>")
+        host.add_port("80", "tcp", "TBD", "http", "</SCRIPT > banner")
+        report = build_single_file_report(JsonConverter({"10.0.0.1": host}).convert())
+
+        # the document must not gain a tag from the scan data
+        self.assertNotIn("<img src=x", report)
+        self.assertNotIn("</SCRIPT >", report)
+        # the payload is still carried, escaped
+        self.assertIn("\\u003c/script>", report)
+
+    def test_the_viewer_ships_a_content_security_policy(self):
+        index = os.path.join(find_resources_dir(), "index.html")
+        with open(index, "r", encoding="utf-8") as f:
+            html = f.read()
+        self.assertIn("Content-Security-Policy", html)
+        self.assertIn("connect-src 'self'", html)
+        self.assertIn("default-src 'none'", html)
+
+
+class TestViewerEscapesScanData(unittest.TestCase):
+    """The escaping in the viewer itself is covered by tests/test_viewer_xss.py,
+    which drives a real browser. This keeps the sinks from growing back."""
+
+    # helpers that escape their own output, so interpolating their result is fine
+    SAFE_HELPERS = ("formatPortLine", "formatNodeTooltip", "formatEdgeTooltip")
+
+    def test_no_unescaped_interpolation_into_markup(self):
+        js_dir = os.path.join(find_resources_dir(), "static", "js")
+        offenders = []
+
+        for name in ("networkGraph.js", "analysis.js"):
+            with open(os.path.join(js_dir, name), "r", encoding="utf-8") as f:
+                for number, line in enumerate(f, 1):
+                    if "${" not in line or "escapeHtml" in line:
+                        continue
+                    # values interpolated into markup, ignoring plain counts
+                    for match in re.findall(r"\$\{([^}]+)\}", line):
+                        expression = match.strip()
+                        if any(helper in expression for helper in self.SAFE_HELPERS):
+                            continue
+                        if re.search(
+                            r"\b(ip|hostname|service|comment|reason|banner|product|"
+                            r"version|port|protocol|state|subnet)\b",
+                            expression,
+                        ) and not re.search(r"\.(length|size)\b", expression):
+                            offenders.append(f"{name}:{number}: {expression}")
+
+        self.assertEqual(offenders, [], "scan data interpolated into markup unescaped")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStateFileLocation(unittest.TestCase):
+    """Where the triage lives.
+
+    `-u` used to read state.md from the current working directory while `-H`
+    wrote it into the scan folder, so the documented round trip only worked
+    from inside that folder. Both sides now use the scan folder.
+    """
+
+    SCAN = (
+        '<?xml version="1.0"?><nmaprun scanner="nmap" start="1700000000">'
+        '<host><status state="up" reason="syn-ack"/>'
+        '<address addr="10.0.0.1" addrtype="ipv4"/>'
+        '<ports><port protocol="tcp" portid="80"><state state="open"/>'
+        '<service name="http" method="probed"/></port>'
+        # a port the triage below does not know about, so a merged rewrite is
+        # visibly different from the file the test put there
+        '<port protocol="tcp" portid="443"><state state="open"/>'
+        '<service name="https" method="probed"/></port></ports>'
+        "</host></nmaprun>"
+    )
+
+    TRIAGE = (
+        "|IP|Hostname|Port|Status|Comment|\n"
+        "|--|--|--|--|---|\n"
+        "|10.0.0.1||80/tcp(http)|Done|already looked at|\n"
+    )
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, ignore_errors=True)
+        with open(os.path.join(self.folder, "scan.xml"), "w", encoding="utf-8") as f:
+            f.write(self.SCAN)
+
+        # somewhere else entirely, so a cwd relative path cannot pass by accident
+        self.elsewhere = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.elsewhere, ignore_errors=True)
+        cwd = os.getcwd()
+        os.chdir(self.elsewhere)
+        self.addCleanup(os.chdir, cwd)
+
+    def run_unitas(self, *arguments):
+        from unitas.unitas import main
+
+        with patch("sys.argv", ["unitas", self.folder, *arguments]):
+            main()
+
+    def state_in(self, folder, name="state.md"):
+        path = os.path.join(folder, name)
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def write_triage(self, folder, name="state.md"):
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.TRIAGE)
+        return path
+
+    def test_the_state_file_is_written_into_the_scan_folder(self):
+        self.run_unitas()
+
+        self.assertIn("10.0.0.1", self.state_in(self.folder))
+        self.assertIsNone(self.state_in(self.elsewhere), "wrote into the cwd")
+
+    def test_update_reads_the_scan_folder(self):
+        self.write_triage(self.folder)
+
+        self.run_unitas("-u")
+
+        # the comment survived the merge and went back into the same file
+        updated = self.state_in(self.folder)
+        self.assertIn("already looked at", updated)
+        self.assertIn("Done", updated)
+        # merged and written back, not just the file the test left there
+        self.assertIn("443/tcp(https)", updated)
+        self.assertIsNone(self.state_in(self.elsewhere), "wrote into the cwd")
+
+    def test_a_state_file_in_the_working_directory_is_not_read(self):
+        self.write_triage(self.elsewhere)
+
+        with self.assertLogs(level="WARNING") as logs:
+            self.run_unitas("-u")
+
+        self.assertIn("no longer read", "\n".join(logs.output))
+        self.assertNotIn("already looked at", self.state_in(self.folder))
+        # and it is left alone rather than overwritten
+        self.assertEqual(self.state_in(self.elsewhere), self.TRIAGE)
+
+    def test_no_warning_once_the_scan_folder_has_one(self):
+        self.write_triage(self.folder)
+        self.write_triage(self.elsewhere)
+
+        with patch("unitas.unitas.logging.warning") as warning:
+            self.run_unitas("-u")
+
+        said = " ".join(str(call) for call in warning.call_args_list)
+        self.assertNotIn("no longer read", said)
+
+    def test_state_file_overrides_both_sides(self):
+        target = os.path.join(self.elsewhere, "triage.md")
+        self.write_triage(self.elsewhere, "triage.md")
+
+        self.run_unitas("-u", "--state-file", target)
+
+        self.assertIn("already looked at", self.state_in(self.elsewhere, "triage.md"))
+        self.assertIsNone(self.state_in(self.folder), "wrote the default as well")
+
+    def test_an_unwritable_folder_is_reported_not_raised(self):
+        if os.geteuid() == 0:
+            self.skipTest("root ignores the write bit")
+        os.chmod(self.folder, 0o500)
+        self.addCleanup(os.chmod, self.folder, 0o700)
+
+        with self.assertLogs(level="ERROR") as logs:
+            self.run_unitas()
+
+        self.assertIn("Could not write", "\n".join(logs.output))

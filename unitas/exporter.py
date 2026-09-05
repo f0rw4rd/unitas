@@ -1,3 +1,4 @@
+import functools
 import logging
 import os
 import time
@@ -11,6 +12,14 @@ from unitas.utils import config
 class NessusExporter:
 
     report_name = "Merged Report"
+
+    # A request that never answers used to hang the CLI forever; the web
+    # interface runs the same code on a background thread, where it would pin
+    # the thread instead. Neither is acceptable, so everything is bounded.
+    REQUEST_TIMEOUT = 30
+    DOWNLOAD_TIMEOUT = 300
+    EXPORT_DEADLINE = 900
+    POLL_INTERVAL = 5
 
     def __init__(self):
         access_key, secret_key, url = (
@@ -36,7 +45,15 @@ class NessusExporter:
             r.raise_for_status()
 
         self.ses.hooks = {"response": error_handler}
+        self.ses.request = functools.partial(
+            self.ses.request, timeout=self.REQUEST_TIMEOUT
+        )
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    @staticmethod
+    def is_configured() -> bool:
+        """Whether a key pair is on file, without raising to find out."""
+        return bool(config.get_access_key() and config.get_secret_key())
 
     def _initiate_export(self, scan_id):
         logging.info(f"Initiating export for scan ID: {scan_id}")
@@ -49,6 +66,7 @@ class NessusExporter:
         logging.debug(
             f"Checking export status for scan ID: {scan_id}, file ID: {file_id}"
         )
+        deadline = time.monotonic() + self.EXPORT_DEADLINE
         while True:
             status = self.ses.get(
                 f"{self.url}/scans/{scan_id}/export/{file_id}/status"
@@ -56,8 +74,15 @@ class NessusExporter:
             if status == "ready":
                 logging.debug(f"Export is ready for download for scan ID: {scan_id}")
                 break
+            if time.monotonic() >= deadline:
+                # an export that is still not ready after this is stuck; give
+                # the thread back rather than polling until the process dies
+                raise TimeoutError(
+                    f"Export of scan {scan_id} was not ready after "
+                    f"{self.EXPORT_DEADLINE}s (last status: {status})"
+                )
             logging.debug("Export is not ready yet, waiting 5 seconds...")
-            time.sleep(5)
+            time.sleep(self.POLL_INTERVAL)
 
     def _list_scans(self) -> List[Dict]:
         logging.debug("Listing nessus scans")
@@ -73,6 +98,50 @@ class NessusExporter:
             else:
                 export_scans.append(x)
         return export_scans
+
+    def list_scans_status(self, target_dir: str) -> dict:
+        """What the server has against what is already on disk.
+
+        This is the "9 of 12 exported, 3 missing" the web interface shows; it
+        touches nothing, so it is safe to call on every page load.
+        """
+        scans = []
+        exported = 0
+        skipped = 0
+
+        for scan in self.ses.get(f"{self.url}/scans").json().get("scans") or []:
+            status = scan.get("status", "")
+            name = scan.get("name", "")
+            # "merged" and the running scans are the ones export() will not take
+            exportable = status not in ("canceled", "cancled", "running") and (
+                name.lower() != "merged"
+            )
+            on_disk = exportable and os.path.exists(
+                self._generate_file_name(target_dir, scan)
+            )
+
+            if on_disk:
+                exported += 1
+            elif not exportable:
+                skipped += 1
+
+            scans.append(
+                {
+                    "id": scan.get("id"),
+                    "name": name,
+                    "status": status,
+                    "exportable": exportable,
+                    "exported": on_disk,
+                }
+            )
+
+        return {
+            "scans": scans,
+            "total": len(scans),
+            "exported": exported,
+            "skipped": skipped,
+            "missing": len(scans) - exported - skipped,
+        }
 
     def _sanitize_name(self, scan: dict) -> str:
         return scan["name"].replace(" ", "_").replace("/", "_").replace("\\", "_")
@@ -91,7 +160,9 @@ class NessusExporter:
             return
         logging.info(f"Downloading export for scan ID: {scan_id} to {filename}")
         response = self.ses.get(
-            f"{self.url}/scans/{scan_id}/export/{file_id}/download", stream=True
+            f"{self.url}/scans/{scan_id}/export/{file_id}/download",
+            stream=True,
+            timeout=self.DOWNLOAD_TIMEOUT,
         )
         response.raise_for_status()
         with open(filename, "wb") as f:
@@ -114,11 +185,16 @@ class NessusExporter:
                 continue
 
             nessus_filename = self._generate_file_name(target_dir, scan)
-            if not os.path.exists(nessus_filename):
-                nessus_file_id = self._initiate_export(scan_id)
-                self._check_export_status(scan_id, nessus_file_id)
-                self._download_export(scan, nessus_file_id, target_dir)
-            else:
+            if os.path.exists(nessus_filename):
                 logging.info(
                     f"Skipping export for {nessus_filename} as it already exists."
                 )
+                continue
+
+            try:
+                nessus_file_id = self._initiate_export(scan_id)
+                self._check_export_status(scan_id, nessus_file_id)
+                self._download_export(scan, nessus_file_id, target_dir)
+            except Exception as e:  # pylint: disable=broad-except
+                # one stuck or forbidden scan must not cost the other eleven
+                logging.error(f'Could not export scan "{scan_name}": {e}')
