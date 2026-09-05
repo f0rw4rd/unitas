@@ -12,7 +12,83 @@ const UI_VIEWS = {
 
 // Both filters are applied together, otherwise typing in the search box
 // silently discards the TBD/Done selection and vice versa.
-const uiFilterState = { term: '', status: 'all' };
+const uiFilterState = { term: '', status: 'all', query: [] };
+
+// The search box understands field operators, because "445" alone also matches
+// a comment, an IP and a hostname. `service:smb port:445 state:tbd
+// net:10.31.112. -printer` reads left to right, every clause has to match, and
+// a bare word is still a substring of the whole row.
+const QUERY_FIELDS = {
+    ip: 'ip',
+    host: 'hostname',
+    hostname: 'hostname',
+    service: 'service',
+    svc: 'service',
+    port: 'port',
+    proto: 'protocol',
+    protocol: 'protocol',
+    state: 'state',
+    status: 'state',
+    comment: 'comment',
+    note: 'comment',
+    net: 'ip',
+    subnet: 'ip'
+};
+
+// net:/subnet: anchor at the start of the address, the rest are substrings;
+// port: and state: are exact, so port:80 does not match 8080 or 8022.
+const QUERY_EXACT = { port: true, state: true, status: true, proto: true, protocol: true };
+const QUERY_PREFIX = { net: true, subnet: true };
+
+function parseSearchQuery(text) {
+    const clauses = [];
+    // quoted values keep their spaces: comment:"default creds"
+    const tokens = String(text || '').match(/-?(?:[\w]+:)?(?:"[^"]*"|\S+)/g) || [];
+
+    tokens.forEach(token => {
+        let negate = false;
+        if (token.startsWith('-') && token.length > 1) {
+            negate = true;
+            token = token.slice(1);
+        }
+
+        const separator = token.indexOf(':');
+        const name = separator > 0 ? token.slice(0, separator).toLowerCase() : '';
+        const field = QUERY_FIELDS[name];
+
+        let value = field ? token.slice(separator + 1) : token;
+        if (value.startsWith('"') && value.endsWith('"') && value.length > 1) {
+            value = value.slice(1, -1);
+        }
+        value = value.toLowerCase();
+        if (!value) return;
+
+        clauses.push({
+            field: field || null,
+            operator: field ? (QUERY_EXACT[name] ? 'is' : QUERY_PREFIX[name] ? 'starts' : 'has') : 'has',
+            value: value,
+            negate: negate
+        });
+    });
+
+    return clauses;
+}
+
+function clauseMatches(row, clause) {
+    // a field the row does not carry (the hosts view has no port column) falls
+    // back to the row text rather than silently matching nothing
+    const value = clause.field !== null && row.dataset[clause.field] !== undefined
+        ? row.dataset[clause.field].toLowerCase()
+        : rowSearchText(row);
+
+    if (clause.operator === 'is' && clause.field !== null && row.dataset[clause.field] !== undefined) {
+        return value === clause.value;
+    }
+    if (clause.operator === 'starts') {
+        return value.startsWith(clause.value);
+    }
+    return value.includes(clause.value);
+}
 
 function setTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
@@ -101,8 +177,9 @@ function rowSearchText(row) {
 }
 
 function rowMatchesFilters(row, tableSelector) {
-    if (uiFilterState.term && !rowSearchText(row).includes(uiFilterState.term)) {
-        return false;
+    for (let i = 0; i < uiFilterState.query.length; i++) {
+        const clause = uiFilterState.query[i];
+        if (clauseMatches(row, clause) === clause.negate) return false;
     }
     if (tableSelector === '#ports-table' && uiFilterState.status !== 'all') {
         // the status lives in the dataset; the cell holds a <select>
@@ -344,6 +421,7 @@ function setupThemeControls() {
 // name, they are the only definitions.
 function filterTables(searchTerm) {
     uiFilterState.term = (searchTerm || '').toLowerCase();
+    uiFilterState.query = parseSearchQuery(searchTerm);
     applyUiFilters();
 }
 

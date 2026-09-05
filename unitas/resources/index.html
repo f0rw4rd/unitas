@@ -116,7 +116,7 @@
 
             <div class="search-container">
                 <input type="text" id="search" aria-label="Search hosts, ports and services"
-                    placeholder="Search for hosts, ports, services... (Press / or Ctrl+F)">
+                    placeholder="Search, or filter with service:smb port:445 state:tbd net:10.31. -printer (/ to focus)">
                 <div class="search-meta">
                     <span class="result-count" id="result-count"></span>
                     <div class="keyboard-shortcuts-hint">
@@ -129,6 +129,13 @@
                         <div class="shortcut-item"><kbd>Ctrl+R</kbd> - Reload data</div>
                         <div class="shortcut-item"><kbd>Ctrl+E</kbd> - Export markdown</div>
                         <div class="shortcut-item"><kbd>T</kbd> - Toggle dark mode</div>
+                        <div class="shortcuts-header">Triage (Ports and Hosts)</div>
+                        <div class="shortcut-item"><kbd>j</kbd> / <kbd>k</kbd> - Move the cursor</div>
+                        <div class="shortcut-item"><kbd>x</kbd> - Select the row (<kbd>Shift</kbd> extends)</div>
+                        <div class="shortcut-item"><kbd>d</kbd> / <kbd>p</kbd> / <kbd>u</kbd> - Mark Done / In progress / TBD</div>
+                        <div class="shortcut-item"><kbd>n</kbd> - Edit the note</div>
+                        <div class="shortcut-item">Search: <code>service:</code> <code>port:</code>
+                            <code>state:</code> <code>net:</code> <code>comment:</code>, <code>-</code> negates</div>
                     </div>
                     </div>
                 </div>

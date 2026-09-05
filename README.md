@@ -144,6 +144,17 @@ every port of the selected hosts. Against a running `-H` server the edits go to
 the browser and "Export state.md" writes them out in the format `unitas -u` merges back
 in.
 
+The search box takes field operators, so "445" does not also drag in every comment and
+hostname containing it: `service:smb`, `port:445`, `state:tbd`, `net:10.31.112.`,
+`comment:"default creds"`, `proto:udp`, `host:dc01`, and `-` in front of any clause (or a
+bare word) negates it. Clauses combine with AND, and a bare word still matches the whole
+row.
+
+The keyboard triages the Ports and Hosts views without the mouse: `j`/`k` move the cursor,
+`x` selects the row (`Shift` extends the range), `d`/`p`/`u` mark Done / In progress / TBD
+-- the selection when there is one, otherwise the row under the cursor -- and `n` jumps
+into the note.
+
 "Copy Visible" copies whatever the current search and status filters leave on screen as
 web URLs, `service://host:port` URLs, `ip:port` pairs, bare IPs, or an nmap re-scan
 command -- the same rules the `-w/--urls` flag uses.

@@ -209,4 +209,115 @@ function refreshSelections() {
     });
 }
 
-document.addEventListener('DOMContentLoaded', setupSelection);
+// ---------------------------------------------------------------- keyboard
+//
+// Working a list of ports is a two handed job: the mouse to read, the keyboard
+// to mark. j/k move, x selects, d/p/u set a state (on the selection when there
+// is one, otherwise on the row under the cursor) and n jumps into the note.
+// "t" is taken by the theme toggle, so TBD is "u", as in untouched.
+
+const TRIAGE_KEYS = { d: 'Done', p: 'In progress', u: 'TBD' };
+
+function triageTable() {
+    const viewId = activeViewId();
+    if (viewId === 'ports-view') return document.getElementById('ports-table');
+    if (viewId === 'hosts-view') return document.getElementById('hosts-table');
+    return null;
+}
+
+function cursorRow(table) {
+    const rows = selectableRows(table);
+    if (rows.length === 0) return null;
+    const current = rows.find(row => row.classList.contains('row-cursor'));
+    return current || null;
+}
+
+function moveCursor(table, step) {
+    const rows = selectableRows(table);
+    if (rows.length === 0) return;
+
+    const current = cursorRow(table);
+    let index = current ? rows.indexOf(current) + step : (step > 0 ? 0 : rows.length - 1);
+    index = Math.max(0, Math.min(rows.length - 1, index));
+
+    if (current) current.classList.remove('row-cursor');
+    const row = rows[index];
+    row.classList.add('row-cursor');
+    row.scrollIntoView({ block: 'nearest' });
+}
+
+function triageTargets(table) {
+    const chosen = selectedRows(table);
+    if (chosen.length) return chosen;
+    const current = cursorRow(table);
+    return current ? [current] : [];
+}
+
+function applyKeyboardState(table, state) {
+    const rows = triageTargets(table);
+    if (rows.length === 0) return;
+
+    if (table.id === 'ports-table') {
+        rows.forEach(row => markPortRow(row, state));
+    } else {
+        rows.forEach(row => markHostState(row.dataset.ip, state));
+    }
+    showToast(`${rows.length} row${rows.length === 1 ? '' : 's'} marked ${state}`);
+
+    clearSelection(table);
+    updateEditIndicator();
+}
+
+function setupTriageKeyboard() {
+    document.addEventListener('keydown', event => {
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        const tag = event.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+        const table = triageTable();
+        if (!table) return;
+
+        if (event.key === 'j' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            moveCursor(table, 1);
+            return;
+        }
+        if (event.key === 'k' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            moveCursor(table, -1);
+            return;
+        }
+
+        const row = cursorRow(table);
+
+        if (event.key === 'x') {
+            event.preventDefault();
+            if (!row) return;
+            const box = row.querySelector('[data-select-row]');
+            if (!box) return;
+            box.checked = !box.checked;
+            handleSelectClick(table, box, event.shiftKey);
+            return;
+        }
+
+        if (event.key === 'n') {
+            if (!row) return;
+            const input = row.querySelector('[data-comment-input]');
+            if (!input) return;
+            event.preventDefault();
+            input.focus();
+            input.select();
+            return;
+        }
+
+        if (TRIAGE_KEYS[event.key]) {
+            event.preventDefault();
+            applyKeyboardState(table, TRIAGE_KEYS[event.key]);
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    setupSelection();
+    setupTriageKeyboard();
+});
