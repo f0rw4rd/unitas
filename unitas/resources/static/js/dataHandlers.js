@@ -164,9 +164,15 @@ function getSubnet(ip) {
     return parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}` : ip;
 }
 
-// A pipe in a hostname or comment would end the markdown cell early
+// A pipe in a hostname or comment would end the markdown cell early. The
+// backslash has to go first and it has to be escaped too, or `unitas -u` reads
+// it back as an escape: "DOMAIN\user" parses as "DOMAINuser", and a comment
+// ending in a backslash swallows the cell separator and corrupts the row. This
+// mirrors escape_markdown_cell() in unitas/convert.py, which the parser pairs
+// with.
 function escapeMarkdownCell(value) {
     return String(value === undefined || value === null ? '' : value)
+        .replace(/\\/g, '\\\\')
         .replace(/\|/g, '\\|')
         .replace(/\r?\n/g, ' ')
         .trim();
