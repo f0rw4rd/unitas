@@ -26,6 +26,7 @@ from unitas.utils import (
     search_port_or_service,
 )
 from unitas.webserver import start_http_server
+from unitas.workspace import STATE_FILENAME
 
 
 class CustomFormatter(logging.Formatter):
@@ -111,6 +112,28 @@ _  / / /_  __ \_  /_  __/  __ `/_  ___/
                                        """
 
 
+def warn_about_orphaned_state(args, state_file: str) -> None:
+    """Say something when a state.md in the working directory is being ignored.
+
+    `-u` used to read state.md from the current directory. Anyone who kept one
+    there would otherwise see nothing but the ordinary "starting with empty
+    state" line and quietly lose their triage from the output.
+    """
+    if not args.update:
+        return
+
+    orphan = os.path.abspath(STATE_FILENAME)
+    if orphan == state_file or os.path.exists(state_file):
+        return
+    if not os.path.exists(orphan):
+        return
+
+    logging.warning(
+        f"{orphan} is no longer read; the triage now lives in {state_file}. "
+        f"Move it there, or pass --state-file to keep using it."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=f"Unitas v{get_version()}: A network scan parser and analyzer",
@@ -136,7 +159,7 @@ def main() -> None:
         "-u",
         "--update",
         action="store_true",
-        help="Update existing markdown from state.md or stdin",
+        help=f"Merge the triage from <scan folder>/{STATE_FILENAME} into the scan results",
     )
     parser.add_argument(
         "-s",
@@ -259,6 +282,12 @@ def main() -> None:
         default=False,
         help="With -H, never write state.md; triage stays in the browser",
     )
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        metavar="FILE",
+        help=f"Triage file to read and write (default: <scan folder>/{STATE_FILENAME})",
+    )
 
     parser.add_argument(
         "-o",
@@ -279,11 +308,6 @@ def main() -> None:
 
     setup_logging(args.verbose)
 
-    if args.update:
-        existing_state = load_markdown_state("state.md")
-    else:
-        existing_state = {}
-
     logging.info(f"Unitas v{get_version()} starting up.")
     logging.info(BANNER)
 
@@ -291,6 +315,19 @@ def main() -> None:
         folder = os.path.abspath(args.scan_folder)
         logging.error(f"Source folder {folder} was not found!")
         return
+
+    # The triage belongs to the engagement, not to whichever directory the shell
+    # happens to be in: it lives beside the scans, which is the file `-H` serves
+    # and rewrites.
+    state_file = os.path.abspath(
+        args.state_file or os.path.join(args.scan_folder, STATE_FILENAME)
+    )
+    warn_about_orphaned_state(args, state_file)
+
+    if args.update:
+        existing_state = load_markdown_state(state_file)
+    else:
+        existing_state = {}
 
     if args.export:
         logging.info(f"Starting nessus export to {os.path.abspath(args.scan_folder)}")
@@ -385,6 +422,7 @@ def main() -> None:
         start_http_server(
             port=args.port,
             scan_folder=args.scan_folder,
+            state_file=args.state_file,
             show_origin=args.origin,
             read_only=args.read_only,
         )
@@ -444,9 +482,14 @@ def main() -> None:
         md_converter = MarkdownConvert(final_state, args.origin)
         md_content = md_converter.convert(True)
 
-        logging.info("Updated state saved to state.md")
-        with open("state.md", "w", encoding="utf-8") as f:
-            f.write(md_content)
+        try:
+            with open(state_file, "w", encoding="utf-8") as f:
+                f.write(md_content)
+            logging.info(f"Updated state saved to {state_file}")
+        except OSError as e:
+            # a read-only share is a reason to print the table anyway, not to
+            # throw the run away
+            logging.error(f"Could not write {state_file}: {e}")
 
         logging.info("Scan Results (Markdown):")
         print()

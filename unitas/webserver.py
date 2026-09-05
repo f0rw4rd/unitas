@@ -384,7 +384,12 @@ def create_server(
 
 
 def start_http_server(
-    json_content=None, port=8000, scan_folder=None, show_origin=False, read_only=False
+    json_content=None,
+    port=8000,
+    scan_folder=None,
+    state_file=None,
+    show_origin=False,
+    read_only=False,
 ):
     """Serve the viewer until interrupted.
 
@@ -396,7 +401,10 @@ def start_http_server(
     try:
         if scan_folder:
             workspace = Workspace(
-                scan_folder, show_origin=show_origin, read_only=read_only
+                scan_folder,
+                state_file=state_file,
+                show_origin=show_origin,
+                read_only=read_only,
             )
             workspace.start()
             logging.info(

@@ -1704,3 +1704,123 @@ class TestViewerEscapesScanData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStateFileLocation(unittest.TestCase):
+    """Where the triage lives.
+
+    `-u` used to read state.md from the current working directory while `-H`
+    wrote it into the scan folder, so the documented round trip only worked
+    from inside that folder. Both sides now use the scan folder.
+    """
+
+    SCAN = (
+        '<?xml version="1.0"?><nmaprun scanner="nmap" start="1700000000">'
+        '<host><status state="up" reason="syn-ack"/>'
+        '<address addr="10.0.0.1" addrtype="ipv4"/>'
+        '<ports><port protocol="tcp" portid="80"><state state="open"/>'
+        '<service name="http" method="probed"/></port>'
+        # a port the triage below does not know about, so a merged rewrite is
+        # visibly different from the file the test put there
+        '<port protocol="tcp" portid="443"><state state="open"/>'
+        '<service name="https" method="probed"/></port></ports>'
+        "</host></nmaprun>"
+    )
+
+    TRIAGE = (
+        "|IP|Hostname|Port|Status|Comment|\n"
+        "|--|--|--|--|---|\n"
+        "|10.0.0.1||80/tcp(http)|Done|already looked at|\n"
+    )
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, ignore_errors=True)
+        with open(os.path.join(self.folder, "scan.xml"), "w", encoding="utf-8") as f:
+            f.write(self.SCAN)
+
+        # somewhere else entirely, so a cwd relative path cannot pass by accident
+        self.elsewhere = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.elsewhere, ignore_errors=True)
+        cwd = os.getcwd()
+        os.chdir(self.elsewhere)
+        self.addCleanup(os.chdir, cwd)
+
+    def run_unitas(self, *arguments):
+        from unitas.unitas import main
+
+        with patch("sys.argv", ["unitas", self.folder, *arguments]):
+            main()
+
+    def state_in(self, folder, name="state.md"):
+        path = os.path.join(folder, name)
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def write_triage(self, folder, name="state.md"):
+        path = os.path.join(folder, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.TRIAGE)
+        return path
+
+    def test_the_state_file_is_written_into_the_scan_folder(self):
+        self.run_unitas()
+
+        self.assertIn("10.0.0.1", self.state_in(self.folder))
+        self.assertIsNone(self.state_in(self.elsewhere), "wrote into the cwd")
+
+    def test_update_reads_the_scan_folder(self):
+        self.write_triage(self.folder)
+
+        self.run_unitas("-u")
+
+        # the comment survived the merge and went back into the same file
+        updated = self.state_in(self.folder)
+        self.assertIn("already looked at", updated)
+        self.assertIn("Done", updated)
+        # merged and written back, not just the file the test left there
+        self.assertIn("443/tcp(https)", updated)
+        self.assertIsNone(self.state_in(self.elsewhere), "wrote into the cwd")
+
+    def test_a_state_file_in_the_working_directory_is_not_read(self):
+        self.write_triage(self.elsewhere)
+
+        with self.assertLogs(level="WARNING") as logs:
+            self.run_unitas("-u")
+
+        self.assertIn("no longer read", "\n".join(logs.output))
+        self.assertNotIn("already looked at", self.state_in(self.folder))
+        # and it is left alone rather than overwritten
+        self.assertEqual(self.state_in(self.elsewhere), self.TRIAGE)
+
+    def test_no_warning_once_the_scan_folder_has_one(self):
+        self.write_triage(self.folder)
+        self.write_triage(self.elsewhere)
+
+        with patch("unitas.unitas.logging.warning") as warning:
+            self.run_unitas("-u")
+
+        said = " ".join(str(call) for call in warning.call_args_list)
+        self.assertNotIn("no longer read", said)
+
+    def test_state_file_overrides_both_sides(self):
+        target = os.path.join(self.elsewhere, "triage.md")
+        self.write_triage(self.elsewhere, "triage.md")
+
+        self.run_unitas("-u", "--state-file", target)
+
+        self.assertIn("already looked at", self.state_in(self.elsewhere, "triage.md"))
+        self.assertIsNone(self.state_in(self.folder), "wrote the default as well")
+
+    def test_an_unwritable_folder_is_reported_not_raised(self):
+        if os.geteuid() == 0:
+            self.skipTest("root ignores the write bit")
+        os.chmod(self.folder, 0o500)
+        self.addCleanup(os.chmod, self.folder, 0o700)
+
+        with self.assertLogs(level="ERROR") as logs:
+            self.run_unitas()
+
+        self.assertIn("Could not write", "\n".join(logs.output))
