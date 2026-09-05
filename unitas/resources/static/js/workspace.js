@@ -191,6 +191,79 @@ function workspaceUpdateIndicator() {
     if (reset) reset.disabled = true;
 }
 
+// -------------------------------------------------------------------- nessus
+
+const NESSUS_POLL_MS = 5000;
+let nessusTimer = null;
+
+function workspaceNessusStatus() {
+    return workspaceFetch('/api/nessus').then(renderNessusPanel);
+}
+
+function renderNessusPanel(status) {
+    const panel = document.getElementById('nessus-panel');
+    const label = document.getElementById('nessus-count');
+    const button = document.getElementById('nessus-export-btn');
+    if (!panel || !label || !button) return;
+
+    // nothing to show when no keys are on file; the CLI says how to set them
+    panel.classList.toggle('hidden', !status.configured);
+    if (!status.configured) return;
+
+    if (status.error) {
+        label.textContent = `Nessus: ${status.error}`;
+        label.dataset.tone = 'error';
+        button.disabled = true;
+        return;
+    }
+
+    const exportable = status.total - status.skipped;
+    if (status.running) {
+        label.textContent = `Nessus: exporting... (${status.exported} of ${exportable})`;
+        label.dataset.tone = '';
+    } else if (status.missing > 0) {
+        label.textContent =
+            `Nessus: ${status.exported} of ${exportable} exported, ${status.missing} missing`;
+        label.dataset.tone = 'missing';
+    } else {
+        label.textContent = `Nessus: all ${exportable} scans exported`;
+        label.dataset.tone = '';
+    }
+
+    if (status.last_error) {
+        label.textContent += ` - last run failed: ${status.last_error}`;
+        label.dataset.tone = 'error';
+    }
+
+    button.disabled = status.running || status.missing === 0 || workspaceReadOnly();
+
+    // while an export runs the counter is the progress bar, so poll faster
+    clearTimeout(nessusTimer);
+    if (status.running) {
+        nessusTimer = setTimeout(workspaceNessusStatus, NESSUS_POLL_MS);
+    }
+}
+
+function workspaceNessusExport() {
+    const button = document.getElementById('nessus-export-btn');
+    if (button) button.disabled = true;
+
+    workspaceFetch('/api/nessus/export', { method: 'POST' })
+        .then(result => {
+            showToast(
+                result.started
+                    ? 'Nessus export started, the scans appear as they download'
+                    : `Export not started: ${result.reason}`,
+                result.started ? '' : 'error'
+            );
+            return workspaceNessusStatus();
+        })
+        .catch(error => {
+            showToast(`Export failed: ${error.message}`, 'error');
+            return workspaceNessusStatus();
+        });
+}
+
 // ------------------------------------------------------------------- syncing
 
 function workspaceApply(payload) {
@@ -212,6 +285,8 @@ function workspaceApply(payload) {
         workspaceAnnounce(previous, workspaceCounts());
     }
     workspaceUpdateIndicator();
+    // new files in the folder change what is still missing from Nessus
+    workspaceNessusStatus().catch(() => { });
 }
 
 function workspaceCounts() {
@@ -323,6 +398,10 @@ function workspaceStart() {
     if (exportState && window.UNITAS.stateFile) {
         exportState.title = `The live state is at ${window.UNITAS.stateFile}`;
     }
+
+    const nessusButton = document.getElementById('nessus-export-btn');
+    if (nessusButton) nessusButton.addEventListener('click', workspaceNessusExport);
+    workspaceNessusStatus().catch(() => { });
 
     showLoading();
     workspacePoll()

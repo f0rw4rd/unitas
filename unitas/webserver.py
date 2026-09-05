@@ -21,6 +21,7 @@ import urllib.parse
 import webbrowser
 from typing import Optional
 
+from unitas.exporter import NessusExporter
 from unitas.report import find_resources_dir
 from unitas.workspace import Workspace
 
@@ -29,10 +30,77 @@ TOKEN_HEADER = "X-Unitas-Token"
 MAX_BODY = 8 * 1024 * 1024
 
 
+class NessusJob:
+    """Pulling scans from Nessus into the folder, off the request thread.
+
+    An export is minutes of polling and downloading; the page asks how it is
+    going through /api/nessus rather than holding a request open for it.
+    """
+
+    def __init__(self, target_dir: str):
+        self.target_dir = target_dir
+        self._lock = threading.Lock()
+        self._thread: Optional[threading.Thread] = None
+        self.last_error: Optional[str] = None
+        self.last_run: Optional[str] = None
+
+    @property
+    def running(self) -> bool:
+        with self._lock:
+            return bool(self._thread and self._thread.is_alive())
+
+    def status(self) -> dict:
+        """The counters the panel shows, plus why they might be missing."""
+        state = {
+            "configured": NessusExporter.is_configured(),
+            "running": self.running,
+            "last_error": self.last_error,
+            "last_run": self.last_run,
+            "scans": [],
+            "total": 0,
+            "exported": 0,
+            "missing": 0,
+            "skipped": 0,
+        }
+        if not state["configured"]:
+            return state
+
+        try:
+            state.update(NessusExporter().list_scans_status(self.target_dir))
+        except Exception as e:  # pylint: disable=broad-except
+            # an unreachable or unauthorised server is a message, not a 500
+            state["error"] = str(e)
+            logging.debug("Could not list Nessus scans: %s", e, exc_info=True)
+        return state
+
+    def start(self) -> dict:
+        if not NessusExporter.is_configured():
+            return {"started": False, "reason": "no Nessus credentials are configured"}
+
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return {"started": False, "reason": "an export is already running"}
+            self.last_error = None
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
+        return {"started": True}
+
+    def _run(self) -> None:
+        try:
+            NessusExporter().export(self.target_dir)
+        except Exception as e:  # pylint: disable=broad-except
+            self.last_error = str(e)
+            logging.error("Nessus export failed: %s", e)
+        finally:
+            self.last_run = time.strftime("%Y-%m-%d %H:%M:%S")
+
+
 class UnitasHandler(http.server.SimpleHTTPRequestHandler):
     """The viewer's assets plus the workspace API."""
 
     workspace: Optional[Workspace] = None
+    nessus: Optional[NessusJob] = None
     token: str = ""
     static_json: Optional[str] = None
     server_version = "unitas"
@@ -136,6 +204,11 @@ class UnitasHandler(http.server.SimpleHTTPRequestHandler):
     def _api_get(self, path: str) -> None:
         if path == "/api/state":
             self._api_state()
+        elif path == "/api/nessus":
+            if self.nessus is None:
+                self._send({"error": "the server has no workspace"}, 404)
+            else:
+                self._send(self.nessus.status())
         elif path == "/api/summary":
             self._send(
                 self.workspace.summary()
@@ -234,8 +307,22 @@ class UnitasHandler(http.server.SimpleHTTPRequestHandler):
             self._api_edits()
         elif path == "/api/rescan":
             self._api_rescan()
+        elif path == "/api/nessus/export":
+            self._api_nessus_export()
         else:
             self._send({"error": "unknown endpoint"}, 404)
+
+    def _api_nessus_export(self) -> None:
+        if self.nessus is None:
+            self._send({"error": "the server has no workspace"}, 404)
+            return
+        if self.workspace.read_only:
+            self._send({"error": "the workspace is read only"}, 409)
+            return
+
+        result = self.nessus.start()
+        # the folder watcher picks the files up on its own once they land
+        self._send(result, 200 if result.get("started") else 409)
 
     def _api_edits(self) -> None:
         payload = self._body()
@@ -284,6 +371,7 @@ def create_server(
             super().__init__(*args, directory=resources_dir, **kwargs)
 
     Handler.workspace = workspace
+    Handler.nessus = NessusJob(workspace.scan_folder) if workspace else None
     Handler.token = token
     Handler.static_json = json_content
 

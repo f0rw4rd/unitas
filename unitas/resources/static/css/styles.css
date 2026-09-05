@@ -673,6 +673,27 @@ tr.row-cursor>td:first-child {
     margin-left: auto;
 }
 
+/* Nessus export counter */
+.nessus-panel {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.nessus-count {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.nessus-count[data-tone="missing"] {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.nessus-count[data-tone="error"] {
+    color: var(--danger);
+}
+
 /* Grouped worklist */
 .group-select {
     display: inline-flex;

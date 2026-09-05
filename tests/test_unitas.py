@@ -9,6 +9,7 @@ import time
 import tempfile
 import json
 import re
+import requests
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import ParseError
 from concurrent.futures import ThreadPoolExecutor
@@ -1101,6 +1102,113 @@ class TestNessusExporter(unittest.TestCase):
 
         mock_sleep.assert_called_once_with(5)
         self.assertEqual(exporter.ses.get.call_count, 2)
+
+    def test_a_stuck_export_gives_up_instead_of_polling_forever(self):
+        exporter = self._make_exporter()
+        exporter.ses = MagicMock()
+        exporter.ses.get.return_value.json.return_value = {"status": "loading"}
+
+        # the clock is what ends this, not the number of polls
+        clock = iter([0, 10, 10 + exporter.EXPORT_DEADLINE])
+        with patch("unitas.exporter.time.sleep"), patch(
+            "unitas.exporter.time.monotonic", side_effect=lambda: next(clock)
+        ):
+            with self.assertRaises(TimeoutError) as raised:
+                exporter._check_export_status(15, 42)
+
+        self.assertIn("loading", str(raised.exception))
+
+    def test_every_request_carries_a_timeout(self):
+        """A Nessus that accepts the connection and then says nothing used to
+        hang the export forever."""
+        # the session is wrapped in the constructor, so the patch goes first
+        with patch.object(requests.Session, "request") as request:
+            exporter = self._make_exporter()
+            request.return_value.json.return_value = {"file": 7}
+            exporter._initiate_export(15)
+
+        self.assertEqual(
+            request.call_args.kwargs["timeout"], NessusExporter.REQUEST_TIMEOUT
+        )
+
+    def test_one_broken_scan_does_not_abandon_the_rest(self):
+        exporter = self._make_exporter()
+        exporter._list_scans = MagicMock(
+            return_value=[
+                {"id": 1, "name": "first"},
+                {"id": 2, "name": "second"},
+                {"id": 3, "name": "third"},
+            ]
+        )
+        exporter._initiate_export = MagicMock(
+            side_effect=[RuntimeError("403"), 20, TimeoutError("stuck")]
+        )
+        exporter._check_export_status = MagicMock()
+        exporter._download_export = MagicMock()
+
+        with tempfile.TemporaryDirectory() as folder:
+            exporter.export(folder)
+
+        # the second scan still downloaded despite the first and third failing
+        self.assertEqual(exporter._download_export.call_count, 1)
+        self.assertEqual(exporter._initiate_export.call_count, 3)
+
+
+class TestNessusScanStatus(unittest.TestCase):
+    """The "N of M exported" counter the web interface shows."""
+
+    SCANS = {
+        "scans": [
+            {"id": 1, "name": "external net", "status": "completed"},
+            {"id": 2, "name": "running one", "status": "running"},
+            {"id": 3, "name": "merged", "status": "completed"},
+        ]
+    }
+
+    def _make_exporter(self):
+        with patch("unitas.exporter.config") as mock_config:
+            mock_config.get_access_key.return_value = "access"
+            mock_config.get_secret_key.return_value = "secret"
+            mock_config.get_url.return_value = "https://nessus:8834"
+            exporter = NessusExporter()
+        exporter.ses = MagicMock()
+        exporter.ses.get.return_value.json.return_value = self.SCANS
+        return exporter
+
+    def test_running_scans_and_merged_are_not_counted_as_missing(self):
+        exporter = self._make_exporter()
+
+        with tempfile.TemporaryDirectory() as folder:
+            status = exporter.list_scans_status(folder)
+
+        self.assertEqual(status["total"], 3)
+        self.assertEqual(status["skipped"], 2)
+        self.assertEqual(status["missing"], 1)
+        self.assertEqual(status["exported"], 0)
+
+    def test_a_file_already_in_the_folder_counts(self):
+        exporter = self._make_exporter()
+
+        with tempfile.TemporaryDirectory() as folder:
+            # the name export() would write it under
+            with open(
+                os.path.join(folder, "external_net_1.nessus"), "w", encoding="utf-8"
+            ) as f:
+                f.write("<NessusClientData_v2/>")
+            status = exporter.list_scans_status(folder)
+
+        self.assertEqual(status["exported"], 1)
+        self.assertEqual(status["missing"], 0)
+
+    def test_is_configured_does_not_raise_on_missing_keys(self):
+        with patch("unitas.exporter.config") as mock_config:
+            mock_config.get_access_key.return_value = ""
+            mock_config.get_secret_key.return_value = ""
+            self.assertFalse(NessusExporter.is_configured())
+
+            mock_config.get_access_key.return_value = "access"
+            mock_config.get_secret_key.return_value = "secret"
+            self.assertTrue(NessusExporter.is_configured())
 
 
 class TestNessusPortScannerParsing(unittest.TestCase):

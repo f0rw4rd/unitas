@@ -150,6 +150,11 @@ hostname containing it: `service:smb`, `port:445`, `state:tbd`, `net:10.31.112.`
 bare word) negates it. Clauses combine with AND, and a bare word still matches the whole
 row.
 
+When Nessus credentials are configured, the header shows how much of the Nessus server is
+already in the folder ("Nessus: 9 of 12 exported, 3 missing") with a button that runs the
+export in the background; the downloads are picked up by the folder watcher as they land,
+so the tables fill in without a reload. Without credentials the panel stays hidden.
+
 "Group by" turns the Ports view into a worklist: each service or subnet gets a header with
 its own progress ("smb - 14 ports, 7 hosts, 3 done") and collapses once it is finished.
 The counts follow the triage and the filters, and sorting a column sorts inside each group
