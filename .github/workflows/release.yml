@@ -32,14 +32,10 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-
-    # PyPI is published to over OIDC (trusted publishing), so the job needs a
-    # token to identify itself with. Naming any permission drops the rest, so
-    # the release step's contents: write has to be spelled out too.
     permissions:
-      id-token: write
-      contents: write
-
+      id-token: write   # OIDC token for PyPI trusted publishing
+      contents: write   # create the GitHub release
+    
     steps:
     - uses: actions/checkout@v4
       with:
@@ -66,9 +62,6 @@ jobs:
     - name: Build package
       run: python -m build
     
-    # Trusted publishing: PyPI trusts this repository and workflow by name, so
-    # there is no token to store or rotate. Username and password uploads are
-    # what the 403 came from.
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
     
