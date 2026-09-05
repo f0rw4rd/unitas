@@ -678,6 +678,16 @@ td.numeric {
     font-weight: 600;
 }
 
+/* the live workspace reports here: progress normally, a warning when an edit
+   has not reached the server */
+.edit-count[data-tone="busy"] {
+    color: var(--warning, #d98324);
+}
+
+.edit-count[data-tone="error"] {
+    color: var(--danger, #c0392b);
+}
+
 .control-group {
     display: flex;
     align-items: center;

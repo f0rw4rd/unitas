@@ -196,10 +196,18 @@ class UnitasHandler(http.server.SimpleHTTPRequestHandler):
                     "readOnly": bool(self.workspace and self.workspace.read_only),
                 }
             ).replace("<", "\\u003c")
-            + ";</script>\n"
-            '<script src="static/js/auto-loader.js"></script>'
+            + ";</script>"
         )
-        html = html.replace("</body>", bootstrap + "</body>")
+        # into the head: workspace.js reads window.UNITAS as it loads, and the
+        # page's own scripts sit at the end of the body
+        html = html.replace("</head>", bootstrap + "\n</head>", 1)
+
+        if self.workspace is None:
+            # the static case still needs something to fetch data.json; with a
+            # workspace the page's own workspace.js drives the API instead
+            html = html.replace(
+                "</body>", '<script src="static/js/auto-loader.js"></script></body>'
+            )
 
         body = html.encode("utf-8")
         self.send_response(200)
