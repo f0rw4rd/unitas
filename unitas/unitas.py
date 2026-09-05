@@ -253,6 +253,12 @@ def main() -> None:
         default=8000,
         help="Port to use for HTTP server (default: 8000)",
     )
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        default=False,
+        help="With -H, never write state.md; triage stays in the browser",
+    )
 
     parser.add_argument(
         "-o",
@@ -374,12 +380,14 @@ def main() -> None:
     if args.http_server:
         logging.info("Starting HTTP server to visualize scan results")
 
-        # Generate JSON data
-        json_exporter = JsonConverter(final_state, hostup_dict, args.origin)
-        json_content = json_exporter.convert()
-
-        # Start the HTTP server
-        start_http_server(json_content, args.port)
+        # the server re-reads the folder itself and owns the state file, so the
+        # state built above is only a head start
+        start_http_server(
+            port=args.port,
+            scan_folder=args.scan_folder,
+            show_origin=args.origin,
+            read_only=args.read_only,
+        )
         return
 
     if args.html_report:

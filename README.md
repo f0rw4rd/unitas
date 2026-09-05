@@ -52,6 +52,7 @@ unitas /path/to/scan/folder [options]
 - `-H`, `--http-server`: Start an HTTP server with interactive visualization of scan results
 - `-R`, `--html-report [FILE]`: Write a single self-contained HTML report (default: `unitas_report.html`)
 - `--port`: Specify the port for the HTTP server (default: 8000)
+- `--read-only`: With `-H`, never write `state.md`
 - `--report-title`: Specify a custom title for the merged Nessus report
 
 ### Service URLs
@@ -95,17 +96,30 @@ To start the web visualization server:
 unitas /path/to/scan/folder -H
 ```
 
-This will:
-1. Process all scan files in the specified folder
-2. Start a local HTTP server (default port 8000)
-3. Open your web browser to the visualization page
-4. Automatically load the scan results
+The server keeps the folder open rather than serialising it once:
+
+1. Every scan file in the folder is parsed and folded into one state
+2. The triage is merged in from `<scan folder>/state.md`, which the server owns
+3. A local HTTP server starts on loopback (default port 8000) and your browser opens
+4. The folder is re-read every two seconds, so a scan dropped in while the server runs
+   shows up without a restart
+
+Because `state.md` lives in the scan folder and is rewritten atomically, the browser and
+the CLI work on the same file:
+
+```
+unitas /path/to/scan/folder -H       # leave it running, triage as scans land
+unitas /path/to/scan/folder -u       # picks up the same state.md
+```
 
 You can specify a custom port if needed:
 
 ```
 unitas /path/to/scan/folder -H --port 9000
 ```
+
+`--read-only` serves the folder without ever writing `state.md`, for a share you do not
+own or an engagement folder you would rather not touch.
 
 ### Single File Report
 
@@ -122,13 +136,10 @@ The file opens straight from the filesystem, needs no server and no network conn
 ### Triage in the Browser
 
 The Ports view is editable: the status column (TBD/Done) and the comment column can be
-changed while working through the hosts. The edits are stored per scan in the browser and
-"Export state.md" writes them out in the format `unitas -u` merges back in:
-
-```
-unitas /path/to/scan/folder -H       # triage, then Export state.md into the scan folder
-unitas /path/to/scan/folder -u       # merges state.md with the next scan run
-```
+changed while working through the hosts. Against a running `-H` server the edits go to
+`<scan folder>/state.md`; from a single file report or a dropped JSON they are stored in
+the browser and "Export state.md" writes them out in the format `unitas -u` merges back
+in.
 
 "Copy Visible" copies whatever the current search and status filters leave on screen as
 web URLs, `service://host:port` URLs, `ip:port` pairs, bare IPs, or an nmap re-scan
