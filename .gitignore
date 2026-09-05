@@ -1,6 +1,11 @@
-# ignore the test files, just local scans
+# Local scans dropped into tests/ are not worth committing, but the test code
+# and its fixtures are: `tests/*` on its own silently swallowed every new test
+# file, so CI only ever ran the ones added before the rule.
 test/
 tests/*
+!tests/*.py
+!tests/nmap_files/
+!tests/nessus_files/
 tests/merged/
 .state.pkl
 state.md
